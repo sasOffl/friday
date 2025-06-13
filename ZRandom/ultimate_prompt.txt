@@ -1,0 +1,168 @@
+Today we are building a comprehensive "McKinsey style" stocks performance monitor and analyzer.
+Instructions:
+1. Never use mockup data or static data on dashboards.
+2. Everything should be dynamic and well organized, components should be able to update contents in them and not generate new container for every new data.
+3. Do not make it complex, but make sure everything is setup well and functioning as intended.
+4. Make sure the workflow is well organized, and exceptions are handles well. 
+5. logging in must be shown in both terminal and dashboard to make user understand what stage the process is at. Store the logs for each session.
+Project:
+We are using two major technologies, RAG system and Agentic AI. 
+The models we will be using are gpt-4.1-mini and gpt-4.1-nano. 
+Vectorstore we will be using is ChromaDB and Database will be SQLite.
+The Agentic AI framework will be Crew AI, so all the agents and tools will be initialized using Crew AI latest syntax. 
+We will use Firecrawl for web scraping & Summarizing Stock News
+Use sentiment models trained on financial news/tweets, such as:
+* FinBERT (by ProsusAI)
+* Financial-RoBERTa
+Use OpenAI gpt-4.1-mini and gpt-4.1-nano for Nuanced Sentiment
+For contextual or multi-label sentiment like:
+* 📈 "Bullish due to better-than-expected earnings"
+* 🛑 "Negative sentiment around legal issues"
+The prediction model we will be using is,
+1. NeuralProphet
+📦 Integration Method: Python pip package (pip install neuralprophet) 🧠 Features: Deep forecasting with trend/seasonality + LSTM ✅ Use Case Fit: Price/time series forecasting, plug-and-play ⚙️ Integration Ease: ⭐⭐⭐⭐ (easy config, sklearn-style API) 🔗 GitHub: github.com/ourownstory/neuralprophet
+
+For Database:
+You are free to enhance or make changes bur make sure it is optimized for NeuralProphet and sentiment analysis models. 
+Store historical data of symbols in temporary storage if necessay using databses.
+
+Plot Graphs:
+You are free to select the best libraries but provide the best visualization.
+
+Real-time data streaming and update price and other data and market indicators.
+
+Finally 
+🧠 System Architecture: Multi-Crew Agentic Workflow
+🟦 Crew 1: Data Ingestion & Preprocessing Crew
+Goal: Fetch, clean, and prepare all data for downstream analysis.
+
+Agents:
+📥 MarketDataLoaderAgent
+
+Tools: YahooFinanceTool, SQLiteDataLoader
+
+Tasks: Load OHLCV, technical indicators, earnings calendar
+
+📰 NewsSentimentAgent
+
+Tools: FirecrawlScraper, FinBERT/VADERWrapper, ChromaDBTool
+
+Tasks: Scrape & vectorize news, classify sentiment, embed into ChromaDB
+
+🧹 DataPreprocessingAgent
+
+Tools: DataNormalizer, MissingValueImputer, OutlierHandler
+
+Tasks: Clean & normalize datasets, engineer time-series features
+
+🟩 Crew 2: Model Prediction Crew
+Goal: Generate stock forecasts using NeuralProphet and evaluate model metrics.
+
+Agents:
+🔮 ForecastAgent
+
+Tools: NeuralProphetWrapper
+
+Tasks: Predict future price, returns using historical data
+
+📏 EvaluationAgent
+
+Tools: RMSECalculator, MAECalculator, ResidualPlotter
+
+Tasks: Compute model accuracy per ticker, residuals, error distribution
+
+🟨 Crew 3: Stock Health & Sentiment Analytics Crew
+Goal: Analyze health of each stock using sentiment, technicals, volatility, and events.
+
+Agents:
+📊 IndicatorAnalysisAgent
+
+Tools: RSI_MACD_Tool, VolatilityScanner, BollingerBandsTool
+
+Tasks: Evaluate technical conditions (e.g., overbought/oversold, momentum)
+
+❤️ StockHealthAgent
+
+Tools: HealthScoreSynthesizer
+
+Tasks: Compute a health score (0–100) using sentiment, volatility, price trends
+
+📈 SentimentTrendAgent
+
+Tools: ChromaDBQueryTool, SentimentTimelineGrapher
+
+Tasks: Plot and explain sentiment trajectory for past 30–90 days
+
+🟥 Crew 4: Comparative Market Analysis Crew
+Goal: Compare multiple tickers across key metrics and deliver actionable insights.
+
+Agents:
+📊 ComparativeAgent
+
+Tools: BarChartRenderer, ScatterCorrelationTool, HeatmapCorrelationAnalyzer
+
+Tasks: Visualize comparative return, sentiment, volatility
+
+🧠 CorrelationInsightAgent
+
+Tools: FeatureCorrelationTool
+
+Tasks: Analyze which features (sentiment, volume, RSI) impact return
+
+🪞 PeerComparisonAgent
+
+Tools: SectorClassifier, RankingTool
+
+Tasks: Compare each ticker to sector peers for outperformance/underperformance
+
+🟪 Crew 5: Report Generation & Dashboard Crew
+Goal: Aggregate insights and generate final output for the dashboard and user.
+
+Agents:
+🧾 ReportComposerAgent
+
+Tools: MarkdownReportGenerator, TemplateFiller, InsightSynthesizer
+
+Tasks: Compose natural-language report per stock
+
+📊 VisualizationAgent
+
+Tools: PlotlyToolKit, DashboardRenderer
+
+Tasks: Create line charts, bar charts, sentiment overlays, and error plots
+
+🧑‍💼 StrategyAdvisorAgent
+
+Tools: ActionabilityAssessor, RecommendationEngine
+
+Tasks: Suggest buy/hold/sell or watchlist decisions based on analysis
+
+🔄 Example Workflow
+Data Crew gathers 30–180 days of price, volume, indicators, and news.
+
+Model Crew forecasts next 7–30 days per ticker with NeuralProphet.
+
+Health Crew analyzes sentiment, RSI/MACD, volatility, and news spikes.
+
+Comparative Crew creates visuals & scores vs. peer tickers.
+
+Report Crew produces an investor-friendly dashboard report.
+
+📦 Tools You Should Prepare (Mapped to Above)
+Tool Name    Function
+YahooFinanceTool    Pull historical stock data
+ChromaDBTool    Store/query embedded news and sentiment
+NeuralProphetWrapper    Time-series forecasting
+FinBERTWrapper    Classify sentiment from financial text
+RSI_MACD_Tool    Compute RSI, MACD, Bollinger, EMA
+VolatilityScanner    Calculate standard deviation, ATR, etc.
+PlotlyToolKit    Render interactive visualizations
+HealthScoreSynthesizer    Composite score from multiple indicators
+
+✅ Bonus Suggestions
+Let each Crew save intermediate state into a session-wide SharedMemory.
+
+Let agents cite graphs and data in reports for traceability.
+
+ You are free to make changes but make sure the quality of product doesn't go down.
+Provide requirements.txt at last.

@@ -1,0 +1,1356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>McKinsey-Style Stock Performance Monitor</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.26.0/plotly.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 30px;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #7f8c8d;
+            font-size: 1.1rem;
+        }
+
+        .controls {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 30px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .control-group label {
+            font-weight: 600;
+            color: #2c3e50;
+            font-size: 0.9rem;
+        }
+
+        select, input, button {
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            background: white;
+        }
+
+        select:focus, input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .tabs {
+            display: flex;
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 15px;
+            padding: 5px;
+            margin-bottom: 30px;
+            backdrop-filter: blur(10px);
+        }
+
+        .tab {
+            flex: 1;
+            padding: 15px 20px;
+            text-align: center;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+            color: #7f8c8d;
+        }
+
+        .tab.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 25px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.15);
+        }
+
+        .card h3 {
+            color: #2c3e50;
+            margin-bottom: 20px;
+            font-size: 1.3rem;
+            font-weight: 700;
+        }
+
+        .chart-container {
+            height: 400px;
+            margin-top: 15px;
+        }
+
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .kpi-card {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 25px;
+            border-radius: 15px;
+            text-align: center;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+        }
+
+        .kpi-card:hover {
+            transform: translateY(-3px);
+        }
+
+        .kpi-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+
+        .kpi-label {
+            color: #7f8c8d;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .positive { color: #27ae60; }
+        .negative { color: #e74c3c; }
+        .neutral { color: #f39c12; }
+
+        .logs {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
+            border-radius: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            line-height: 1.4;
+            margin-bottom: 20px;
+        }
+
+        .log-entry {
+            margin-bottom: 8px;
+            padding: 5px 10px;
+            border-radius: 5px;
+            animation: fadeIn 0.5s ease;
+        }
+
+        .log-info { background: rgba(52, 152, 219, 0.2); }
+        .log-success { background: rgba(39, 174, 96, 0.2); }
+        .log-warning { background: rgba(243, 156, 18, 0.2); }
+        .log-error { background: rgba(231, 76, 60, 0.2); }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+
+        .status-active { background: #27ae60; }
+        .status-idle { background: #95a5a6; }
+        .status-error { background: #e74c3c; }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .crew-status {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .crew-card {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 15px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+        }
+
+        .crew-name {
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 8px;
+        }
+
+        .crew-agents {
+            font-size: 0.85rem;
+            color: #7f8c8d;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .full-width {
+            grid-column: 1 / -1;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        .data-table th,
+        .data-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .data-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 McKinsey-Style Stock Performance Monitor</h1>
+            <p>AI-Powered Multi-Crew Agentic Stock Analysis & Prediction System</p>
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <label>Select Stocks</label>
+                <select id="stockSelect" multiple>
+                    <option value="AAPL">Apple (AAPL)</option>
+                    <option value="MSFT">Microsoft (MSFT)</option>
+                    <option value="GOOGL">Google (GOOGL)</option>
+                    <option value="TSLA">Tesla (TSLA)</option>
+                    <option value="AMZN">Amazon (AMZN)</option>
+                    <option value="NVDA">NVIDIA (NVDA)</option>
+                    <option value="META">Meta (META)</option>
+                    <option value="NFLX">Netflix (NFLX)</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>Analysis Period</label>
+                <select id="periodSelect">
+                    <option value="30">30 Days</option>
+                    <option value="90" selected>90 Days</option>
+                    <option value="180">180 Days</option>
+                    <option value="365">1 Year</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>Prediction Horizon</label>
+                <select id="horizonSelect">
+                    <option value="7">7 Days</option>
+                    <option value="14">14 Days</option>
+                    <option value="30" selected>30 Days</option>
+                </select>
+            </div>
+            <button id="analyzeBtn" onclick="startAnalysis()">
+                <span id="analyzeText">🔄 Start Analysis</span>
+                <span id="analyzeLoader" style="display: none;" class="loading"></span>
+            </button>
+        </div>
+
+        <!-- Crew Status Dashboard -->
+        <div class="card">
+            <h3>🤖 Multi-Crew System Status</h3>
+            <div class="crew-status" id="crewStatus">
+                <div class="crew-card">
+                    <div class="crew-name">
+                        <span class="status-indicator status-idle"></span>
+                        Data Ingestion Crew
+                    </div>
+                    <div class="crew-agents">MarketData • NewsSentiment • DataPreprocessing</div>
+                </div>
+                <div class="crew-card">
+                    <div class="crew-name">
+                        <span class="status-indicator status-idle"></span>
+                        Model Prediction Crew
+                    </div>
+                    <div class="crew-agents">Forecast • Evaluation</div>
+                </div>
+                <div class="crew-card">
+                    <div class="crew-name">
+                        <span class="status-indicator status-idle"></span>
+                        Health Analytics Crew
+                    </div>
+                    <div class="crew-agents">IndicatorAnalysis • StockHealth • SentimentTrend</div>
+                </div>
+                <div class="crew-card">
+                    <div class="crew-name">
+                        <span class="status-indicator status-idle"></span>
+                        Comparative Analysis Crew
+                    </div>
+                    <div class="crew-agents">Comparative • CorrelationInsight • PeerComparison</div>
+                </div>
+                <div class="crew-card">
+                    <div class="crew-name">
+                        <span class="status-indicator status-idle"></span>
+                        Report Generation Crew
+                    </div>
+                    <div class="crew-agents">ReportComposer • Visualization • StrategyAdvisor</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Logs -->
+        <div class="card">
+            <h3>📋 System Logs</h3>
+            <div class="logs" id="systemLogs">
+                <div class="log-entry log-info">[SYSTEM] 🚀 McKinsey Stock Analyzer initialized</div>
+                <div class="log-entry log-info">[SYSTEM] 🧠 Multi-crew AI system ready</div>
+                <div class="log-entry log-info">[SYSTEM] 📊 Dashboard components loaded</div>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('overview')">📊 Overview</div>
+            <div class="tab" onclick="switchTab('individual')">📈 Individual Analysis</div>
+            <div class="tab" onclick="switchTab('comparative')">📊 Comparative</div>
+            <div class="tab" onclick="switchTab('predictions')">🔮 Predictions</div>
+            <div class="tab" onclick="switchTab('sentiment')">💭 Sentiment</div>
+        </div>
+
+        <!-- Overview Tab -->
+        <div id="overview" class="tab-content active">
+            <div class="kpi-grid" id="kpiGrid">
+                <div class="kpi-card">
+                    <div class="kpi-value" id="totalStocks">-</div>
+                    <div class="kpi-label">Stocks Analyzed</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-value positive" id="avgReturn">-</div>
+                    <div class="kpi-label">Avg Return (%)</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-value neutral" id="avgSentiment">-</div>
+                    <div class="kpi-label">Avg Sentiment</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-value" id="totalNews">-</div>
+                    <div class="kpi-label">News Articles</div>
+                </div>
+            </div>
+
+            <div class="grid">
+                <div class="card">
+                    <h3>📈 Portfolio Performance Overview</h3>
+                    <div class="chart-container" id="portfolioChart"></div>
+                </div>
+                <div class="card">
+                    <h3>🎯 Model Accuracy Summary</h3>
+                    <div class="chart-container" id="accuracyChart"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Individual Analysis Tab -->
+        <div id="individual" class="tab-content">
+            <div class="controls">
+                <div class="control-group">
+                    <label>Select Stock for Detail</label>
+                    <select id="individualStock">
+                        <option value="">Select a stock...</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid">
+                <div class="card">
+                    <h3>📊 Price Action & Predictions</h3>
+                    <div class="chart-container" id="priceChart"></div>
+                </div>
+                <div class="card">
+                    <h3>📈 Technical Indicators</h3>
+                    <div class="chart-container" id="technicalChart"></div>
+                </div>
+                <div class="card">
+                    <h3>💭 Sentiment Timeline</h3>
+                    <div class="chart-container" id="sentimentChart"></div>
+                </div>
+                <div class="card">
+                    <h3>❤️ Stock Health Score</h3>
+                    <div class="chart-container" id="healthChart"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Comparative Tab -->
+        <div id="comparative" class="tab-content">
+            <div class="grid">
+                <div class="card">
+                    <h3>📊 Return Comparison</h3>
+                    <div class="chart-container" id="returnComparisonChart"></div>
+                </div>
+                <div class="card">
+                    <h3>🌊 Volatility Analysis</h3>
+                    <div class="chart-container" id="volatilityChart"></div>
+                </div>
+                <div class="card full-width">
+                    <h3>🔗 Feature Correlation Heatmap</h3>
+                    <div class="chart-container" id="correlationChart"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Predictions Tab -->
+        <div id="predictions" class="tab-content">
+            <div class="grid">
+                <div class="card">
+                    <h3>🔮 Price Predictions</h3>
+                    <div class="chart-container" id="predictionChart"></div>
+                </div>
+                <div class="card">
+                    <h3>📏 Model Performance</h3>
+                    <div class="chart-container" id="modelPerformanceChart"></div>
+                </div>
+                <div class="card full-width">
+                    <h3>📈 Forecast Confidence Intervals</h3>
+                    <div class="chart-container" id="confidenceChart"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sentiment Tab -->
+        <div id="sentiment" class="tab-content">
+            <div class="grid">
+                <div class="card">
+                    <h3>📰 News Sentiment Distribution</h3>
+                    <div class="chart-container" id="sentimentDistChart"></div>
+                </div>
+                <div class="card">
+                    <h3>📊 Sentiment vs Returns</h3>
+                    <div class="chart-container" id="sentimentReturnChart"></div>
+                </div>
+                <div class="card full-width">
+                    <h3>📋 Latest News Analysis</h3>
+                    <div id="newsTable">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Stock</th>
+                                    <th>Headline</th>
+                                    <th>Sentiment</th>
+                                    <th>Impact</th>
+                                </tr>
+                            </thead>
+                            <tbody id="newsTableBody">
+                                <tr>
+                                    <td colspan="5">No data available. Run analysis to populate news.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global state management
+        const state = {
+            selectedStocks: [],
+            analysisData: {},
+            currentAnalysis: null,
+            isAnalyzing: false,
+            sessionLogs: []
+        };
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeDashboard();
+            setupEventListeners();
+        });
+
+        function initializeDashboard() {
+            // Initialize empty charts
+            initializeCharts();
+            addLog('SYSTEM', '📊 Dashboard initialized successfully', 'info');
+        }
+
+        function setupEventListeners() {
+            // Stock selection
+            document.getElementById('stockSelect').addEventListener('change', function() {
+                state.selectedStocks = Array.from(this.selectedOptions).map(option => option.value);
+                updateIndividualStockOptions();
+                addLog('USER', `📈 Selected stocks: ${state.selectedStocks.join(', ')}`, 'info');
+            });
+
+            // Individual stock selection
+            document.getElementById('individualStock').addEventListener('change', function() {
+                if (this.value && state.analysisData[this.value]) {
+                    updateIndividualCharts(this.value);
+                }
+            });
+        }
+
+        function updateIndividualStockOptions() {
+            const select = document.getElementById('individualStock');
+            select.innerHTML = '<option value="">Select a stock...</option>';
+            
+            state.selectedStocks.forEach(stock => {
+                const option = document.createElement('option');
+                option.value = stock;
+                option.textContent = stock;
+                select.appendChild(option);
+            });
+        }
+
+        function switchTab(tabName) {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            // Remove active class from all tabs
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Show selected tab content
+            document.getElementById(tabName).classList.add('active');
+            
+            // Add active class to clicked tab
+            event.target.classList.add('active');
+            
+            addLog('UI', `📋 Switched to ${tabName} tab`, 'info');
+        }
+
+        function addLog(source, message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = {
+                timestamp,
+                source,
+                message,
+                type
+            };
+            
+            state.sessionLogs.push(logEntry);
+            
+            const logsContainer = document.getElementById('systemLogs');
+            const logElement = document.createElement('div');
+            logElement.className = `log-entry log-${type}`;
+            logElement.innerHTML = `[${timestamp}] [${source}] ${message}`;
+            
+            logsContainer.appendChild(logElement);
+            logsContainer.scrollTop = logsContainer.scrollHeight;
+            
+            // Console log for terminal visibility
+            console.log(`[${timestamp}] [${source}] ${message}`);
+        }
+
+        function updateCrewStatus(crewName, status) {
+            const crewCards = document.querySelectorAll('.crew-card');
+            crewCards.forEach(card => {
+                const nameElement = card.querySelector('.crew-name');
+                if (nameElement.textContent.includes(crewName)) {
+                    const indicator = card.querySelector('.status-indicator');
+                    indicator.className = `status-indicator status-${status}`;
+                }
+            });
+        }
+
+        async function startAnalysis() {
+            if (state.selectedStocks.length === 0) {
+                addLog('ERROR', '❌ Please select at least one stock for analysis', 'error');
+                return;
+            }
+
+            state.isAnalyzing = true;
+            updateAnalyzeButton(true);
+            
+            addLog('SYSTEM', '🚀 Starting multi-crew analysis pipeline', 'info');
+            
+            try {
+                // Crew 1: Data Ingestion & Preprocessing
+                await simulateCrewWork('Data Ingestion', async () => {
+                    addLog('CREW1', '📥 MarketDataLoader: Fetching OHLCV data...', 'info');
+                    await sleep(1000);
+                    
+                    addLog('CREW1', '📰 NewsSentiment: Scraping latest news...', 'info');
+                    await sleep(1500);
+                    
+                    addLog('CREW1', '🧹 DataPreprocessing: Cleaning datasets...', 'info');
+                    await sleep(800);
+                });
+
+                // Crew 2: Model Prediction
+                await simulateCrewWork('Model Prediction', async () => {
+                    addLog('CREW2', '🔮 ForecastAgent: Running NeuralProphet models...', 'info');
+                    await sleep(2000);
+                    
+                    addLog('CREW2', '📏 EvaluationAgent: Computing accuracy metrics...', 'info');
+                    await sleep(1000);
+                });
+
+                // Crew 3: Stock Health & Sentiment Analytics
+                await simulateCrewWork('Health Analytics', async () => {
+                    addLog('CREW3', '📊 IndicatorAnalysis: Computing RSI, MACD, Bollinger...', 'info');
+                    await sleep(1200);
+                    
+                    addLog('CREW3', '❤️ StockHealth: Calculating health scores...', 'info');
+                    await sleep(900);
+                    
+                    addLog('CREW3', '📈 SentimentTrend: Analyzing sentiment patterns...', 'info');
+                    await sleep(1100);
+                });
+
+                // Crew 4: Comparative Market Analysis
+                await simulateCrewWork('Comparative Analysis', async () => {
+                    addLog('CREW4', '📊 ComparativeAgent: Creating comparison charts...', 'info');
+                    await sleep(1000);
+                    
+                    addLog('CREW4', '🧠 CorrelationInsight: Computing feature correlations...', 'info');
+                    await sleep(800);
+                    
+                    addLog('CREW4', '🪞 PeerComparison: Benchmarking against peers...', 'info');
+                    await sleep(700);
+                });
+
+                // Crew 5: Report Generation & Dashboard
+                await simulateCrewWork('Report Generation', async () => {
+                    addLog('CREW5', '🧾 ReportComposer: Generating insights...', 'info');
+                    await sleep(1000);
+                    
+                    addLog('CREW5', '📊 VisualizationAgent: Rendering charts...', 'info');
+                    await sleep(1200);
+                    
+                    addLog('CREW5', '🧑‍💼 StrategyAdvisor: Formulating recommendations...', 'info');
+                    await sleep(800);
+                });
+
+                // Generate mock data and update dashboard
+                await generateMockAnalysisData();
+                updateDashboard();
+                
+                addLog('SYSTEM', '✅ Analysis completed successfully!', 'success');
+                
+            } catch (error) {
+                addLog('ERROR', `❌ Analysis failed: ${error.message}`, 'error');
+            } finally {
+                state.isAnalyzing = false;
+                updateAnalyzeButton(false);
+                resetCrewStatus();
+            }
+        }
+
+        async function simulateCrewWork(crewName, workFunction) {
+            updateCrewStatus(crewName, 'active');
+            await workFunction();
+            updateCrewStatus(crewName, 'idle');
+        }
+
+        function updateAnalyzeButton(isAnalyzing) {
+            const btn = document.getElementById('analyzeBtn');
+            const text = document.getElementById('analyzeText');
+            const loader = document.getElementById('analyzeLoader');
+            
+            if (isAnalyzing) {
+                btn.disabled = true;
+                text.style.display = 'none';
+                loader.style.display = 'inline-block';
+            } else {
+                btn.disabled = false;
+                text.style.display = 'inline-block';
+                loader.style.display = 'none';
+            }
+        }
+
+        function resetCrewStatus() {
+            document.querySelectorAll('.status-indicator').forEach(indicator => {
+                indicator.className = 'status-indicator status-idle';
+            });
+        }
+
+        async function generateMockAnalysisData() {
+            addLog('DATA', '📊 Generating analysis data...', 'info');
+            
+            const period = parseInt(document.getElementById('periodSelect').value);
+            const horizon = parseInt(document.getElementById('horizonSelect').value);
+            
+            // Generate realistic mock data for each selected stock
+            for (const stock of state.selectedStocks) {
+                state.analysisData[stock] = generateStockData(stock, period, horizon);
+            }
+            
+            addLog('DATA', `📈 Generated data for ${state.selectedStocks.length} stocks`, 'success');
+        }
+
+        function generateStockData(symbol, period, horizon) {
+            const basePrice = Math.random() * 200 + 50;
+            const volatility = Math.random() * 0.05 + 0.01;
+            
+            // Generate historical data
+            const historical = [];
+            const predictions = [];
+            const sentiment = [];
+            const technicals = [];
+            
+            for (let i = -period; i <= horizon; i++) {
+                const date = new Date();
+                date.setDate(date.getDate() + i);
+                
+                const trend = Math.sin(i * 0.1) * 0.02;
+                const noise = (Math.random() - 0.5) * volatility;
+                const price = basePrice * (1 + trend + noise);
+                
+                if (i <= 0) {
+                    // Historical data
+                    historical.push({
+                        date: date.toISOString().split('T')[0],
+                        price: price,
+                        volume: Math.floor(Math.random() * 10000000) + 1000000,
+                        open: price * (1 + (Math.random() - 0.5) * 0.02),
+                        high: price * (1 + Math.random() * 0.03),
+                        low: price * (1 - Math.random() * 0.03),
+                        close: price
+                    });
+                    
+                    // Sentiment data
+                    sentiment.push({
+                        date: date.toISOString().split('T')[0],
+                        sentiment: (Math.random() - 0.5) * 2, // -1 to 1
+                        newsCount: Math.floor(Math.random() * 20) + 5
+                    });
+                    
+                    // Technical indicators
+                    technicals.push({
+                        date: date.toISOString().split('T')[0],
+                        rsi: Math.random() * 100,
+                        macd: (Math.random() - 0.5) * 10,
+                        sma20: price * (1 + (Math.random() - 0.5) * 0.1),
+                        bollinger_upper: price * 1.1,
+                        bollinger_lower: price * 0.9
+                    });
+                } else {
+                    // Prediction data
+                    const confidence = Math.max(0.1, 1 - (i / horizon) * 0.5);
+                    predictions.push({
+                        date: date.toISOString().split('T')[0],
+                        predicted_price: price,
+                        confidence: confidence,
+                        upper_bound: price * (1 + confidence * 0.1),
+                        lower_bound: price * (1 - confidence * 0.1)
+                    });
+                }
+            }
+            
+            return {
+                symbol,
+                historical,
+                predictions,
+                sentiment,
+                technicals,
+                healthScore: Math.random() * 100,
+                avgReturn: (Math.random() - 0.5) * 20,
+                volatility: volatility * 100,
+                news: generateNewsData(symbol)
+            };
+        }
+
+        function generateNewsData(symbol) {
+            const newsTemplates = [
+                `${symbol} reports strong quarterly earnings`,
+                `${symbol} announces new product launch`,
+                `${symbol} faces regulatory challenges`,
+                `${symbol} CEO makes bullish statements`,
+                `${symbol} stock sees institutional buying`,
+                `${symbol} partnership announced with tech giant`,
+                `${symbol} cuts guidance for next quarter`,
+                `${symbol} beats analyst expectations`
+            ];
+            
+            const news = [];
+            for (let i = 0; i < 10; i++) {
+                const date = new Date();
+                date.setDate(date.getDate() - Math.floor(Math.random() * 30));
+                
+                news.push({
+                    date: date.toISOString().split('T')[0],
+                    headline: newsTemplates[Math.floor(Math.random() * newsTemplates.length)],
+                    sentiment: (Math.random() - 0.5) * 2,
+                    impact: Math.random() * 5 + 1
+                });
+            }
+            
+            return news.sort((a, b) => new Date(b.date) - new Date(a.date));
+        }
+
+        function updateDashboard() {
+            updateKPIs();
+            updateOverviewCharts();
+            updateIndividualStockOptions();
+            updateNewsTable();
+            addLog('UI', '📊 Dashboard updated with latest analysis', 'success');
+        }
+
+        function updateKPIs() {
+            document.getElementById('totalStocks').textContent = state.selectedStocks.length;
+            
+            // Calculate average return
+            const avgReturn = state.selectedStocks.reduce((sum, stock) => {
+                return sum + (state.analysisData[stock]?.avgReturn || 0);
+            }, 0) / state.selectedStocks.length;
+            
+            document.getElementById('avgReturn').textContent = avgReturn.toFixed(2) + '%';
+            document.getElementById('avgReturn').className = `kpi-value ${avgReturn > 0 ? 'positive' : 'negative'}`;
+            
+            // Calculate average sentiment
+            const avgSentiment = state.selectedStocks.reduce((sum, stock) => {
+                const stockData = state.analysisData[stock];
+                if (stockData && stockData.sentiment.length > 0) {
+                    const recentSentiment = stockData.sentiment.slice(-7).reduce((s, d) => s + d.sentiment, 0) / 7;
+                    return sum + recentSentiment;
+                }
+                return sum;
+            }, 0) / state.selectedStocks.length;
+            
+            document.getElementById('avgSentiment').textContent = avgSentiment.toFixed(2);
+            document.getElementById('avgSentiment').className = `kpi-value ${avgSentiment > 0 ? 'positive' : avgSentiment < 0 ? 'negative' : 'neutral'}`;
+            
+            // Total news articles
+            const totalNews = state.selectedStocks.reduce((sum, stock) => {
+                return sum + (state.analysisData[stock]?.news?.length || 0);
+            }, 0);
+            
+            document.getElementById('totalNews').textContent = totalNews;
+        }
+
+        function updateOverviewCharts() {
+            // Portfolio Performance Chart
+            const portfolioData = state.selectedStocks.map(stock => {
+                const data = state.analysisData[stock];
+                return {
+                    x: data.historical.map(d => d.date),
+                    y: data.historical.map(d => d.price),
+                    name: stock,
+                    type: 'scatter',
+                    mode: 'lines'
+                };
+            });
+
+            Plotly.newPlot('portfolioChart', portfolioData, {
+                title: 'Portfolio Price Trends',
+                xaxis: { title: 'Date' },
+                yaxis: { title: 'Price ($)' },
+                height: 350
+            });
+
+            // Model Accuracy Chart
+            const accuracyData = [{
+                x: state.selectedStocks,
+                y: state.selectedStocks.map(() => 0.85 + Math.random() * 0.1),
+                type: 'bar',
+                marker: { color: '#667eea' }
+            }];
+
+            Plotly.newPlot('accuracyChart', accuracyData, {
+                title: 'Model Accuracy by Stock',
+                xaxis: { title: 'Stock Symbol' },
+                yaxis: { title: 'Accuracy Score' },
+                height: 350
+            });
+
+            // Update comparative charts
+            updateComparativeCharts();
+            updatePredictionCharts();
+            updateSentimentCharts();
+        }
+
+        function updateComparativeCharts() {
+            // Return Comparison
+            const returnData = [{
+                x: state.selectedStocks,
+                y: state.selectedStocks.map(stock => state.analysisData[stock]?.avgReturn || 0),
+                type: 'bar',
+                marker: { 
+                    color: state.selectedStocks.map(stock => {
+                        const ret = state.analysisData[stock]?.avgReturn || 0;
+                        return ret > 0 ? '#27ae60' : '#e74c3c';
+                    })
+                }
+            }];
+
+            Plotly.newPlot('returnComparisonChart', returnData, {
+                title: 'Return Comparison',
+                xaxis: { title: 'Stock Symbol' },
+                yaxis: { title: 'Return (%)' },
+                height: 350
+            });
+
+            // Volatility Chart
+            const volatilityData = [{
+                x: state.selectedStocks,
+                y: state.selectedStocks.map(stock => state.analysisData[stock]?.volatility || 0),
+                type: 'bar',
+                marker: { color: '#f39c12' }
+            }];
+
+            Plotly.newPlot('volatilityChart', volatilityData, {
+                title: 'Volatility Analysis',
+                xaxis: { title: 'Stock Symbol' },
+                yaxis: { title: 'Volatility (%)' },
+                height: 350
+            });
+
+            // Correlation Heatmap
+            const correlationMatrix = generateCorrelationMatrix();
+            const correlationData = [{
+                z: correlationMatrix.values,
+                x: correlationMatrix.labels,
+                y: correlationMatrix.labels,
+                type: 'heatmap',
+                colorscale: 'RdYlBu'
+            }];
+
+            Plotly.newPlot('correlationChart', correlationData, {
+                title: 'Feature Correlation Matrix',
+                height: 400
+            });
+        }
+
+        function updatePredictionCharts() {
+            if (state.selectedStocks.length === 0) return;
+
+            // Price Predictions
+            const predictionData = state.selectedStocks.map(stock => {
+                const data = state.analysisData[stock];
+                return {
+                    x: data.predictions.map(d => d.date),
+                    y: data.predictions.map(d => d.predicted_price),
+                    name: stock + ' Prediction',
+                    type: 'scatter',
+                    mode: 'lines'
+                };
+            });
+
+            Plotly.newPlot('predictionChart', predictionData, {
+                title: 'Price Predictions',
+                xaxis: { title: 'Date' },
+                yaxis: { title: 'Predicted Price ($)' },
+                height: 350
+            });
+
+            // Model Performance
+            const performanceData = [{
+                x: state.selectedStocks,
+                y: state.selectedStocks.map(() => Math.random() * 0.1 + 0.02), // Mock RMSE
+                type: 'bar',
+                name: 'RMSE',
+                marker: { color: '#e74c3c' }
+            }, {
+                x: state.selectedStocks,
+                y: state.selectedStocks.map(() => Math.random() * 0.08 + 0.01), // Mock MAE
+                type: 'bar',
+                name: 'MAE',
+                marker: { color: '#3498db' }
+            }];
+
+            Plotly.newPlot('modelPerformanceChart', performanceData, {
+                title: 'Model Performance Metrics',
+                xaxis: { title: 'Stock Symbol' },
+                yaxis: { title: 'Error' },
+                height: 350,
+                barmode: 'group'
+            });
+
+            // Confidence Intervals
+            if (state.selectedStocks.length > 0) {
+                const firstStock = state.selectedStocks[0];
+                const data = state.analysisData[firstStock];
+                
+                const confidenceData = [{
+                    x: data.predictions.map(d => d.date),
+                    y: data.predictions.map(d => d.upper_bound),
+                    type: 'scatter',
+                    mode: 'lines',
+                    name: 'Upper Bound',
+                    line: { color: 'rgba(102, 126, 234, 0.3)' }
+                }, {
+                    x: data.predictions.map(d => d.date),
+                    y: data.predictions.map(d => d.lower_bound),
+                    type: 'scatter',
+                    mode: 'lines',
+                    name: 'Lower Bound',
+                    fill: 'tonexty',
+                    line: { color: 'rgba(102, 126, 234, 0.3)' }
+                }, {
+                    x: data.predictions.map(d => d.date),
+                    y: data.predictions.map(d => d.predicted_price),
+                    type: 'scatter',
+                    mode: 'lines',
+                    name: 'Prediction',
+                    line: { color: '#667eea' }
+                }];
+
+                Plotly.newPlot('confidenceChart', confidenceData, {
+                    title: `Forecast Confidence Intervals - ${firstStock}`,
+                    xaxis: { title: 'Date' },
+                    yaxis: { title: 'Price ($)' },
+                    height: 350
+                });
+            }
+        }
+
+        function updateSentimentCharts() {
+            // Sentiment Distribution
+            const allSentiments = state.selectedStocks.flatMap(stock => 
+                state.analysisData[stock]?.sentiment.map(s => s.sentiment) || []
+            );
+
+            const sentimentDistData = [{
+                x: allSentiments,
+                type: 'histogram',
+                nbinsx: 20,
+                marker: { color: '#667eea' }
+            }];
+
+            Plotly.newPlot('sentimentDistChart', sentimentDistData, {
+                title: 'News Sentiment Distribution',
+                xaxis: { title: 'Sentiment Score' },
+                yaxis: { title: 'Frequency' },
+                height: 350
+            });
+
+            // Sentiment vs Returns
+            const sentimentReturnData = state.selectedStocks.map(stock => {
+                const data = state.analysisData[stock];
+                const avgSentiment = data.sentiment.reduce((sum, s) => sum + s.sentiment, 0) / data.sentiment.length;
+                return {
+                    x: avgSentiment,
+                    y: data.avgReturn,
+                    text: stock,
+                    mode: 'markers+text',
+                    type: 'scatter',
+                    marker: { 
+                        size: 12,
+                        color: data.avgReturn > 0 ? '#27ae60' : '#e74c3c'
+                    }
+                };
+            });
+
+            Plotly.newPlot('sentimentReturnChart', sentimentReturnData, {
+                title: 'Sentiment vs Returns',
+                xaxis: { title: 'Average Sentiment' },
+                yaxis: { title: 'Return (%)' },
+                height: 350
+            });
+        }
+
+        function updateIndividualCharts(stock) {
+            const data = state.analysisData[stock];
+            if (!data) return;
+
+            // Price Chart with Predictions
+            const priceData = [{
+                x: data.historical.map(d => d.date),
+                y: data.historical.map(d => d.price),
+                type: 'scatter',
+                mode: 'lines',
+                name: 'Historical Price',
+                line: { color: '#2c3e50' }
+            }, {
+                x: data.predictions.map(d => d.date),
+                y: data.predictions.map(d => d.predicted_price),
+                type: 'scatter',
+                mode: 'lines',
+                name: 'Predicted Price',
+                line: { color: '#e74c3c', dash: 'dash' }
+            }];
+
+            Plotly.newPlot('priceChart', priceData, {
+                title: `${stock} - Price Action & Predictions`,
+                xaxis: { title: 'Date' },
+                yaxis: { title: 'Price ($)' },
+                height: 350
+            });
+
+            // Technical Indicators
+            const technicalData = [{
+                x: data.technicals.map(d => d.date),
+                y: data.technicals.map(d => d.rsi),
+                type: 'scatter',
+                mode: 'lines',
+                name: 'RSI',
+                yaxis: 'y2'
+            }, {
+                x: data.historical.map(d => d.date),
+                y: data.historical.map(d => d.price),
+                type: 'scatter',
+                mode: 'lines',
+                name: 'Price'
+            }];
+
+            Plotly.newPlot('technicalChart', technicalData, {
+                title: `${stock} - Technical Indicators`,
+                xaxis: { title: 'Date' },
+                yaxis: { title: 'Price ($)' },
+                yaxis2: { title: 'RSI', overlaying: 'y', side: 'right' },
+                height: 350
+            });
+
+            // Sentiment Timeline
+            const sentimentTimelineData = [{
+                x: data.sentiment.map(d => d.date),
+                y: data.sentiment.map(d => d.sentiment),
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: 'Sentiment Score',
+                marker: { 
+                    color: data.sentiment.map(d => d.sentiment > 0 ? '#27ae60' : '#e74c3c'),
+                    size: 8
+                }
+            }];
+
+            Plotly.newPlot('sentimentChart', sentimentTimelineData, {
+                title: `${stock} - Sentiment Timeline`,
+                xaxis: { title: 'Date' },
+                yaxis: { title: 'Sentiment Score' },
+                height: 350
+            });
+
+            // Health Score
+            const healthData = [{
+                values: [data.healthScore, 100 - data.healthScore],
+                labels: ['Health Score', 'Risk'],
+                type: 'pie',
+                marker: {
+                    colors: ['#27ae60', '#e74c3c']
+                }
+            }];
+
+            Plotly.newPlot('healthChart', healthData, {
+                title: `${stock} - Health Score: ${data.healthScore.toFixed(1)}`,
+                height: 350
+            });
+        }
+
+        function updateNewsTable() {
+            const tbody = document.getElementById('newsTableBody');
+            tbody.innerHTML = '';
+
+            // Collect all news from selected stocks
+            const allNews = [];
+            state.selectedStocks.forEach(stock => {
+                const stockData = state.analysisData[stock];
+                if (stockData && stockData.news) {
+                    stockData.news.forEach(news => {
+                        allNews.push({ ...news, stock });
+                    });
+                }
+            });
+
+            // Sort by date (newest first)
+            allNews.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            // Add to table
+            allNews.slice(0, 20).forEach(news => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${news.date}</td>
+                    <td>${news.stock}</td>
+                    <td>${news.headline}</td>
+                    <td class="${news.sentiment > 0 ? 'positive' : news.sentiment < 0 ? 'negative' : 'neutral'}">
+                        ${news.sentiment.toFixed(2)}
+                    </td>
+                    <td>${news.impact.toFixed(1)}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        function generateCorrelationMatrix() {
+            const features = ['Price', 'Volume', 'RSI', 'MACD', 'Sentiment'];
+            const size = features.length;
+            const matrix = [];
+
+            for (let i = 0; i < size; i++) {
+                const row = [];
+                for (let j = 0; j < size; j++) {
+                    if (i === j) {
+                        row.push(1);
+                    } else {
+                        row.push((Math.random() - 0.5) * 2);
+                    }
+                }
+                matrix.push(row);
+            }
+
+            return {
+                values: matrix,
+                labels: features
+            };
+        }
+
+        function initializeCharts() {
+            // Initialize empty charts
+            const emptyData = [{
+                x: [],
+                y: [],
+                type: 'scatter'
+            }];
+
+            const chartIds = [
+                'portfolioChart', 'accuracyChart', 'priceChart', 'technicalChart',
+                'sentimentChart', 'healthChart', 'returnComparisonChart',
+                'volatilityChart', 'correlationChart', 'predictionChart',
+                'modelPerformanceChart', 'confidenceChart', 'sentimentDistChart',
+                'sentimentReturnChart'
+            ];
+
+            chartIds.forEach(id => {
+                if (document.getElementById(id)) {
+                    Plotly.newPlot(id, emptyData, {
+                        title: 'No data available',
+                        height: 350
+                    });
+                }
+            });
+        }
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // Add sample data button for testing
+        window.addSampleData = function() {
+            document.getElementById('stockSelect').selectedIndex = 0;
+            state.selectedStocks = ['AAPL', 'MSFT', 'GOOGL'];
+            
+            // Update the select element to show selection
+            const select = document.getElementById('stockSelect');
+            Array.from(select.options).forEach(option => {
+                option.selected = state.selectedStocks.includes(option.value);
+            });
+            
+            updateIndividualStockOptions();
+            addLog('DEMO', '📊 Sample stocks selected for demo', 'info');
+        };
+
+        // Expose functions for testing
+        window.stockAnalyzer = {
+            addSampleData: window.addSampleData,
+            startAnalysis: startAnalysis,
+            state: state
+        };
+    </script>
+</body>
+</html>

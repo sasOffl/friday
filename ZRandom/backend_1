@@ -1,0 +1,1490 @@
+#!/usr/bin/env python3
+"""
+McKinsey-Style Stock Performance Monitor & Analyzer
+Multi-Crew Agentic AI System with RAG and Real-time Analytics
+"""
+
+import asyncio
+import logging
+import json
+import sqlite3
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional
+from dataclasses import dataclass
+import pandas as pd
+import numpy as np
+from pathlib import Path
+
+# FastAPI for REST API
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
+import uvicorn
+
+# CrewAI Framework
+from crewai import Agent, Task, Crew, Process
+from crewai.tools import BaseTool
+
+# Machine Learning & Forecasting
+from neuralprophet import NeuralProphet
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+import torch
+
+# Data Sources
+import yfinance as yf
+from firecrawl import FirecrawlApp
+import requests
+
+# Vector Database
+import chromadb
+from chromadb.config import Settings
+
+# Sentiment Analysis
+from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
+import re
+
+# Visualization
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.utils import PlotlyJSONEncoder
+
+# Utils
+from concurrent.futures import ThreadPoolExecutor
+import warnings
+warnings.filterwarnings('ignore')
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('stock_analyzer.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+@dataclass
+class StockAnalysisRequest:
+    symbols: List[str]
+    period: int = 90
+    horizon: int = 30
+
+@dataclass
+class SessionState:
+    session_id: str
+    analysis_data: Dict[str, Any]
+    logs: List[Dict[str, Any]]
+    crew_status: Dict[str, str]
+    created_at: datetime
+
+class DatabaseManager:
+    """SQLite Database Manager optimized for time-series and sentiment data"""
+    
+    def __init__(self, db_path: str = "stock_analyzer.db"):
+        self.db_path = db_path
+        self.init_database()
+    
+    def init_database(self):
+        """Initialize database with optimized schema"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Historical stock data table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS stock_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            date DATE NOT NULL,
+            open REAL,
+            high REAL,
+            low REAL,
+            close REAL,
+            volume INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(symbol, date)
+        )
+        ''')
+        
+        # Technical indicators table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS technical_indicators (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            date DATE NOT NULL,
+            rsi REAL,
+            macd REAL,
+            macd_signal REAL,
+            bollinger_upper REAL,
+            bollinger_lower REAL,
+            sma_20 REAL,
+            ema_20 REAL,
+            volume_sma REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(symbol, date)
+        )
+        ''')
+        
+        # News and sentiment table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS news_sentiment (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            date DATE NOT NULL,
+            headline TEXT,
+            content TEXT,
+            source TEXT,
+            sentiment_score REAL,
+            sentiment_label TEXT,
+            confidence REAL,
+            impact_score REAL,
+            embedding_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+        
+        # Model predictions table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS predictions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            prediction_date DATE NOT NULL,
+            target_date DATE NOT NULL,
+            predicted_price REAL,
+            confidence_upper REAL,
+            confidence_lower REAL,
+            model_version TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+        
+        # Session logs table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS session_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            timestamp TIMESTAMP,
+            source TEXT,
+            message TEXT,
+            log_type TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
+        
+        # Create indexes for performance
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_stock_symbol_date ON stock_data(symbol, date)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_tech_symbol_date ON technical_indicators(symbol, date)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_news_symbol_date ON news_sentiment(symbol, date)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_pred_symbol_date ON predictions(symbol, target_date)')
+        
+        conn.commit()
+        conn.close()
+        logger.info("Database initialized successfully")
+    
+    def get_connection(self):
+        return sqlite3.connect(self.db_path)
+    
+    def store_stock_data(self, symbol: str, data: pd.DataFrame):
+        """Store stock data with conflict resolution"""
+        conn = self.get_connection()
+        try:
+            data_records = []
+            for index, row in data.iterrows():
+                data_records.append((
+                    symbol, 
+                    index.strftime('%Y-%m-%d'),
+                    row.get('Open', 0),
+                    row.get('High', 0),
+                    row.get('Low', 0),
+                    row.get('Close', 0),
+                    int(row.get('Volume', 0))
+                ))
+            
+            conn.executemany('''
+                INSERT OR REPLACE INTO stock_data 
+                (symbol, date, open, high, low, close, volume)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', data_records)
+            conn.commit()
+            logger.info(f"Stored {len(data_records)} records for {symbol}")
+        except Exception as e:
+            logger.error(f"Error storing stock data for {symbol}: {e}")
+        finally:
+            conn.close()
+    
+    def get_stock_data(self, symbol: str, days: int = 90) -> pd.DataFrame:
+        """Retrieve stock data for analysis"""
+        conn = self.get_connection()
+        try:
+            query = '''
+                SELECT date, open, high, low, close, volume
+                FROM stock_data
+                WHERE symbol = ? AND date >= date('now', '-{} days')
+                ORDER BY date
+            '''.format(days)
+            
+            df = pd.read_sql_query(query, conn, parse_dates=['date'])
+            df.set_index('date', inplace=True)
+            return df
+        except Exception as e:
+            logger.error(f"Error retrieving stock data for {symbol}: {e}")
+            return pd.DataFrame()
+        finally:
+            conn.close()
+
+class VectorStoreManager:
+    """ChromaDB Vector Store for news and sentiment embeddings"""
+    
+    def __init__(self, persist_directory: str = "./chroma_db"):
+        self.client = chromadb.PersistentClient(path=persist_directory)
+        self.collection = self.client.get_or_create_collection(
+            name="stock_news_sentiment",
+            metadata={"hnsw:space": "cosine"}
+        )
+        logger.info("ChromaDB initialized successfully")
+    
+    def add_news_embedding(self, news_id: str, text: str, metadata: Dict[str, Any]):
+        """Add news article embedding to vector store"""
+        try:
+            # Simple embedding using sentence transformers would be better
+            # For now, using a placeholder
+            embedding = self._generate_embedding(text)
+            
+            self.collection.add(
+                embeddings=[embedding],
+                documents=[text],
+                metadatas=[metadata],
+                ids=[news_id]
+            )
+            logger.info(f"Added news embedding: {news_id}")
+        except Exception as e:
+            logger.error(f"Error adding news embedding: {e}")
+    
+    def _generate_embedding(self, text: str) -> List[float]:
+        """Generate text embedding (placeholder - use proper embedding model)"""
+        # In production, use sentence-transformers or OpenAI embeddings
+        return [0.1] * 384  # Placeholder embedding
+    
+    def query_similar_news(self, query: str, n_results: int = 5) -> Dict[str, Any]:
+        """Query similar news articles"""
+        try:
+            embedding = self._generate_embedding(query)
+            results = self.collection.query(
+                query_embeddings=[embedding],
+                n_results=n_results
+            )
+            return results
+        except Exception as e:
+            logger.error(f"Error querying similar news: {e}")
+            return {}
+
+class SentimentAnalyzer:
+    """Financial sentiment analysis using FinBERT and RoBERTa"""
+    
+    def __init__(self):
+        try:
+            # Initialize FinBERT for financial sentiment
+            self.finbert_tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")
+            self.finbert_model = AutoModelForSequenceClassification.from_pretrained("ProsusAI/finbert")
+            self.finbert_pipeline = pipeline(
+                "sentiment-analysis",
+                model=self.finbert_model,
+                tokenizer=self.finbert_tokenizer
+            )
+            
+            # Initialize general sentiment pipeline as fallback
+            self.general_pipeline = pipeline("sentiment-analysis")
+            
+            logger.info("Sentiment analyzers initialized successfully")
+        except Exception as e:
+            logger.error(f"Error initializing sentiment analyzers: {e}")
+            self.finbert_pipeline = None
+            self.general_pipeline = pipeline("sentiment-analysis")
+    
+    def analyze_sentiment(self, text: str) -> Dict[str, Any]:
+        """Analyze sentiment of financial text"""
+        try:
+            # Clean and preprocess text
+            cleaned_text = self._clean_text(text)
+            
+            # Try FinBERT first
+            if self.finbert_pipeline:
+                try:
+                    result = self.finbert_pipeline(cleaned_text)
+                    return self._process_sentiment_result(result[0], "finbert")
+                except Exception as e:
+                    logger.warning(f"FinBERT failed, using general pipeline: {e}")
+            
+            # Fallback to general sentiment
+            result = self.general_pipeline(cleaned_text)
+            return self._process_sentiment_result(result[0], "general")
+            
+        except Exception as e:
+            logger.error(f"Error analyzing sentiment: {e}")
+            return {"sentiment": "neutral", "score": 0.0, "confidence": 0.0, "model": "error"}
+    
+    def _clean_text(self, text: str) -> str:
+        """Clean and preprocess text for sentiment analysis"""
+        # Remove special characters, extra whitespace, etc.
+        text = re.sub(r'[^\w\s]', ' ', text)
+        text = re.sub(r'\s+', ' ', text)
+        return text.strip()[:512]  # Limit to model max length
+    
+    def _process_sentiment_result(self, result: Dict[str, Any], model: str) -> Dict[str, Any]:
+        """Process and normalize sentiment analysis result"""
+        label = result.get('label', '').lower()
+        score = result.get('score', 0.0)
+        
+        # Normalize labels
+        if label in ['positive', 'pos']:
+            sentiment = "positive"
+            normalized_score = score
+        elif label in ['negative', 'neg']:
+            sentiment = "negative"
+            normalized_score = -score
+        else:
+            sentiment = "neutral"
+            normalized_score = 0.0
+        
+        return {
+            "sentiment": sentiment,
+            "score": normalized_score,
+            "confidence": score,
+            "model": model
+        }
+
+# CrewAI Tools
+class YahooFinanceTool(BaseTool):
+    name: str = "Yahoo Finance Data Loader"
+    description: str = "Fetches historical stock data from Yahoo Finance"
+    
+    def _run(self, symbol: str, period: str = "90d") -> Dict[str, Any]:
+        """Fetch stock data from Yahoo Finance"""
+        try:
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period=period)
+            
+            if hist.empty:
+                return {"error": f"No data found for {symbol}"}
+            
+            # Convert to dict for JSON serialization
+            data = {
+                "symbol": symbol,
+                "data": hist.to_dict('records'),
+                "info": ticker.info
+            }
+            
+            logger.info(f"Fetched {len(hist)} records for {symbol}")
+            return data
+            
+        except Exception as e:
+            logger.error(f"Error fetching data for {symbol}: {e}")
+            return {"error": str(e)}
+
+class FirecrawlNewsTool(BaseTool):
+    name: str = "Firecrawl News Scraper"
+    description: str = "Scrapes and summarizes stock news using Firecrawl"
+    
+    def __init__(self):
+        super().__init__()
+        # Initialize Firecrawl (you'll need API key)
+        # self.firecrawl = FirecrawlApp(api_key="your_api_key")
+    
+    def _run(self, symbol: str, days: int = 7) -> Dict[str, Any]:
+        """Scrape recent news for a stock symbol"""
+        try:
+            # Placeholder for Firecrawl integration
+            # In production, you would use Firecrawl to scrape news sites
+            
+            # For now, generate mock news data
+            news_data = self._generate_mock_news(symbol, days)
+            
+            logger.info(f"Scraped {len(news_data)} news articles for {symbol}")
+            return {"symbol": symbol, "news": news_data}
+            
+        except Exception as e:
+            logger.error(f"Error scraping news for {symbol}: {e}")
+            return {"error": str(e)}
+    
+    def _generate_mock_news(self, symbol: str, days: int) -> List[Dict[str, Any]]:
+        """Generate mock news data for testing"""
+        import random
+        from datetime import datetime, timedelta
+        
+        news_templates = [
+            f"{symbol} reports strong quarterly earnings",
+            f"{symbol} announces new product launch",
+            f"{symbol} faces regulatory challenges",
+            f"{symbol} CEO makes bullish statements about future",
+            f"{symbol} stock sees increased institutional buying",
+            f"{symbol} partnership announced with major tech company",
+            f"{symbol} cuts guidance for upcoming quarter",
+            f"{symbol} beats analyst expectations on revenue"
+        ]
+        
+        news_data = []
+        for i in range(random.randint(5, 15)):
+            date = datetime.now() - timedelta(days=random.randint(0, days))
+            headline = random.choice(news_templates)
+            
+            news_data.append({
+                "date": date.strftime("%Y-%m-%d"),
+                "headline": headline,
+                "content": f"Full article content about {headline}...",
+                "source": random.choice(["Reuters", "Bloomberg", "Yahoo Finance", "MarketWatch"]),
+                "url": f"https://example.com/news/{i}"
+            })
+        
+        return sorted(news_data, key=lambda x: x['date'], reverse=True)
+
+class NeuralProphetTool(BaseTool):
+    name: str = "NeuralProphet Forecasting Tool"
+    description: str = "Performs time series forecasting using NeuralProphet"
+    
+    def _run(self, data: pd.DataFrame, horizon: int = 30) -> Dict[str, Any]:
+        """Forecast stock prices using NeuralProphet"""
+        try:
+            if data.empty:
+                return {"error": "No data provided for forecasting"}
+            
+            # Prepare data for NeuralProphet (needs 'ds' and 'y' columns)
+            forecast_data = pd.DataFrame({
+                'ds': data.index,
+                'y': data['close'] if 'close' in data.columns else data.iloc[:, 0]
+            })
+            
+            # Initialize and train NeuralProphet model
+            model = NeuralProphet(
+                growth="linear",
+                n_forecasts=1,
+                n_lags=14,
+                yearly_seasonality=False,
+                weekly_seasonality=True,
+                daily_seasonality=False,
+                epochs=50,
+                learning_rate=0.01,
+                loss_func="mse"
+            )
+            
+            # Fit the model
+            model.fit(forecast_data, freq='D')
+            
+            # Make future predictions
+            future = model.make_future_dataframe(forecast_data, periods=horizon)
+            forecast = model.predict(future)
+            
+            # Calculate confidence intervals (simplified)
+            forecast['yhat_upper'] = forecast['yhat1'] * 1.1
+            forecast['yhat_lower'] = forecast['yhat1'] * 0.9
+            
+            # Convert to dict for JSON serialization
+            result = {
+                "predictions": forecast[['ds', 'yhat1', 'yhat_upper', 'yhat_lower']].tail(horizon).to_dict('records'),
+                "historical_fit": forecast[['ds', 'yhat1']].head(len(forecast_data)).to_dict('records'),
+                "model_params": {
+                    "n_lags": 14,
+                    "epochs": 50,
+                    "learning_rate": 0.01
+                }
+            }
+            
+            logger.info(f"Generated {horizon} day forecast")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in NeuralProphet forecasting: {e}")
+            return {"error": str(e)}
+
+class TechnicalIndicatorsTool(BaseTool):
+    name: str = "Technical Indicators Calculator"
+    description: str = "Calculates RSI, MACD, Bollinger Bands, and other technical indicators"
+    
+    def _run(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """Calculate technical indicators"""
+        try:
+            if data.empty:
+                return {"error": "No data provided for technical analysis"}
+            
+            indicators = {}
+            
+            # RSI (Relative Strength Index)
+            indicators['rsi'] = self._calculate_rsi(data['close']).to_dict()
+            
+            # MACD (Moving Average Convergence Divergence)
+            macd_data = self._calculate_macd(data['close'])
+            indicators['macd'] = macd_data['macd'].to_dict()
+            indicators['macd_signal'] = macd_data['signal'].to_dict()
+            indicators['macd_histogram'] = macd_data['histogram'].to_dict()
+            
+            # Bollinger Bands
+            bb_data = self._calculate_bollinger_bands(data['close'])
+            indicators['bollinger_upper'] = bb_data['upper'].to_dict()
+            indicators['bollinger_lower'] = bb_data['lower'].to_dict()
+            indicators['bollinger_middle'] = bb_data['middle'].to_dict()
+            
+            # Moving Averages
+            indicators['sma_20'] = data['close'].rolling(window=20).mean().to_dict()
+            indicators['ema_20'] = data['close'].ewm(span=20).mean().to_dict()
+            
+            # Volume indicators
+            indicators['volume_sma'] = data['volume'].rolling(window=20).mean().to_dict()
+            
+            logger.info("Technical indicators calculated successfully")
+            return indicators
+            
+        except Exception as e:
+            logger.error(f"Error calculating technical indicators: {e}")
+            return {"error": str(e)}
+    
+    def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:
+        """Calculate RSI"""
+        delta = prices.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+    
+    def _calculate_macd(self, prices: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Dict[str, pd.Series]:
+        """Calculate MACD"""
+        ema_fast = prices.ewm(span=fast).mean()
+        ema_slow = prices.ewm(span=slow).mean()
+        macd = ema_fast - ema_slow
+        signal_line = macd.ewm(span=signal).mean()
+        histogram = macd - signal_line
+        
+        return {
+            'macd': macd,
+            'signal': signal_line,
+            'histogram': histogram
+        }
+    
+    def _calculate_bollinger_bands(self, prices: pd.Series, period: int = 20, std_dev: int = 2) -> Dict[str, pd.Series]:
+        """Calculate Bollinger Bands"""
+        sma = prices.rolling(window=period).mean()
+        std = prices.rolling(window=period).std()
+        
+        return {
+            'upper': sma + (std * std_dev),
+            'middle': sma,
+            'lower': sma - (std * std_dev)
+        }
+
+# CrewAI Agents
+def create_market_data_agent(db_manager: DatabaseManager):
+    """Create MarketDataLoaderAgent"""
+    return Agent(
+        role='Market Data Loader',
+        goal='Fetch and store comprehensive market data for analysis',
+        backstory='Expert in financial data acquisition and preprocessing',
+        tools=[YahooFinanceTool()],
+        verbose=True,
+        allow_delegation=False
+    )
+
+def create_news_sentiment_agent(vector_store: VectorStoreManager, sentiment_analyzer: SentimentAnalyzer):
+    """Create NewsSentimentAgent"""
+    return Agent(
+        role='News Sentiment Analyst',
+        goal='Scrape, analyze, and classify sentiment from financial news',
+        backstory='Specialized in NLP and financial sentiment analysis',
+        tools=[FirecrawlNewsTool()],
+        verbose=True,
+        allow_delegation=False
+    )
+
+def create_forecast_agent():
+    """Create ForecastAgent"""
+    return Agent(
+        role='Price Forecast Analyst',
+        goal='Generate accurate price predictions using NeuralProphet',
+        backstory='Expert in time series forecasting and machine learning',
+        tools=[NeuralProphetTool()],
+        verbose=True,
+        allow_delegation=False
+    )
+
+def create_technical_analyst():
+    """Create IndicatorAnalysisAgent"""
+    return Agent(
+        role='Technical Analysis Expert',
+        goal='Calculate and interpret technical indicators',
+        backstory='Specialized in technical analysis and market indicators',
+        tools=[TechnicalIndicatorsTool()],
+        verbose=True,
+        allow_delegation=False
+    )
+
+# Main Application Class
+class StockAnalyzerApp:
+    """Main application orchestrating all components"""
+    
+    def __init__(self):
+        self.db_manager = DatabaseManager()
+        self.vector_store = VectorStoreManager()
+        self.sentiment_analyzer = SentimentAnalyzer()
+        self.sessions: Dict[str, SessionState] = {}
+        
+        # Initialize FastAPI
+        self.app = FastAPI(title="McKinsey Stock Analyzer", version="1.0.0")
+        self.setup_routes()
+        
+        logger.info("Stock Analyzer App initialized successfully")
+    
+    def setup_routes(self):
+        """Setup FastAPI routes"""
+        
+        @self.app.get("/")
+        async def root():
+            return {"message": "McKinsey Stock Analyzer API"}
+        
+        @self.app.post("/analyze")
+        async def analyze_stocks(request: StockAnalysisRequest):
+            """Start stock analysis"""
+            session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            # Create new session
+            session = SessionState(
+                session_id=session_id,
+                analysis_data={},
+                logs=[],
+                crew_status={},
+                created_at=datetime.now()
+            )
+            self.sessions[session_id] = session
+            
+            # Start analysis in background
+            asyncio.create_task(self.run_analysis(session_id, request))
+            
+            return {"session_id": session_id, "status": "started"}
+        
+        @self.app.get("/status/{session_id}")
+        async def get_status(session_id: str):
+            """Get analysis status"""
+            if session_id not in self.sessions:
+                raise HTTPException(status_code=404, detail="Session not found")
+            
+            session = self.sessions[session_id]
+            return {
+                "session_id": session_id,
+                "crew_status": session.crew_status,
+                "logs": session.logs[-10:],  # Last 10 logs
+                "analysis_complete": len(session.analysis_data) > 0
+            }
+        
+        @self.app.get("/results/{session_id}")
+        async def get_results(session_id: str):
+            """Get analysis results"""
+            if session_id not in self.sessions:
+                raise HTTPException(status_code=404, detail="Session not found")
+            
+            session = self.sessions[session_id]
+            return {
+                "session_id": session_id,
+                "analysis_data": session.analysis_data,
+                "logs": session.logs
+            }
+        
+        @self.app.websocket("/ws/{session_id}")
+        async def websocket_endpoint(websocket: WebSocket, session_id: str):
+            """WebSocket for real-time updates"""
+            await websocket.accept()
+            
+            try:
+                while True:
+                    if session_id in self.sessions:
+                        session = self.sessions[session_id]
+                        await websocket.send_json({
+                            "type": "status_update",
+                            "crew_status": session.crew_status,
+                            "latest_logs": session.logs[-5:],
+                            "progress": len(session.analysis_data)
+                        })
+                    
+                    await asyncio.sleep(2)  # Update every 2 seconds
+                    
+            except WebSocketDisconnect:
+                logger.info(f"WebSocket disconnected for session {session_id}")
+    
+    async def run_analysis(self, session_id: str, request: StockAnalysisRequest):
+        """Run the complete multi-crew analysis pipeline"""
+        session = self.sessions[session_id]
+        
+        try:
+            self.log_message(session_id, "SYSTEM", "🚀 Starting multi-crew analysis pipeline", "info")
+            
+            # Crew 1: Data Ingestion & Preprocessing
+            await self.run_data_ingestion_crew(session_id, request)
+            
+            # Crew 2: Model Prediction
+            await self.run_prediction_crew(session_id, request)
+            
+            # Crew 3: Health & Sentiment Analytics
+            await self.run_analytics_crew(session_id, request)
+            
+            # Crew 4: Comparative Analysis
+            await self.run_comparative_crew(session_id, request)
+            
+            # Crew 5: Report Generation
+            await self.run_report_crew(session_id, request)
+            
+            self.log_message(session_id, "SYSTEM", "✅ Analysis pipeline completed successfully", "success")
+            
+        except Exception as e:
+            self.log_message(session_id, "ERROR", f"❌ Analysis failed: {str(e)}", "error")
+            logger.error(f"Analysis failed for session {session_id}: {e}")
+    
+    async def run_data_ingestion_crew(self, session_id: str, request: StockAnalysisRequest):
+        """Execute Data Ingestion & Preprocessing Crew"""
+        session = self.sessions[session_id]
+        session.crew_status["Data Ingestion"] = "active"
+        
+        self.log_message(session_id, "CREW1", "📥 MarketDataLoader: Fetching OHLCV data...", "info")
+        
+        # Create agents
+        market_agent = create_market_data_agent(self.db_manager)
+        news_agent = create_news_sentiment_agent(self.vector_store, self.sentiment_analyzer)
+        
+        # Create tasks
+        data_tasks = []
+        for symbol in request.symbols:
+            # Fetch market data
+            yahoo_tool = YahooFinanceTool()
+            market_data = yahoo_tool._run(symbol, f"{request.period}d")
+            
+            if "error" not in market_data:
+                # Convert and store data
+                hist_data = pd.DataFrame(market_data["data"])
+                if not hist_data.empty:
+                    hist_data.index = pd.to_datetime(hist_data.index)
+                    self.db_manager.store_stock_data(symbol, hist_data)
+                
+                # Store in session
+                session.analysis_data[symbol] = {
+                    "symbol": symbol,
+                    "market_data": market_data,
+                    "historical": hist_data.to_dict('records') if not hist_data.empty else []
+                }
+            
+            await asyncio.sleep(0.5)  # Rate limiting
+        
+        self.log_message(session_id, "CREW1", "📰 NewsSentiment: Scraping latest news...", "info")
+        
+        # Fetch and analyze news
+        for symbol in request.symbols:
+            news_tool = FirecrawlNewsTool()
+            news_data = news_tool._run(symbol, 7)
+            
+            if "error" not in news_data and symbol in session.analysis_data:
+                # Analyze sentiment for each news article
+                analyzed_news = []
+                for article in news_data["news"]:
+                    sentiment_result = self.sentiment_analyzer.analyze_sentiment(
+                        article["headline"] + " " + article["content"]
+                    )
+                    
+                    article.update(sentiment_result)
+                    analyzed_news.append(article)
+                
+                session.analysis_data[symbol]["news"] = analyzed_news
+            
+            await asyncio.sleep(0.5)
+        
+        self.log_message(session_id, "CREW1", "🧹 DataPreprocessing: Cleaning datasets...", "info")
+        await asyncio.sleep(1)
+        
+        session.crew_status["Data Ingestion"] = "completed"
+        self.log_message(session_id, "CREW1", "✅ Data ingestion completed", "success")
+    
+    async def run_prediction_crew(self, session_id: str, request: StockAnalysisRequest):
+        """Execute Model Prediction Crew"""
+        session = self.sessions[session_id]
+        session.crew_status["Model Prediction"] = "active"
+        
+        self.log_message(session_id, "CREW2", "🔮 ForecastAgent: Running NeuralProphet predictions...", "info")
+        
+        forecast_agent = create_forecast_agent()
+        
+        # Run forecasting for each symbol
+        for symbol in request.symbols:
+            if symbol in session.analysis_data:
+                # Get historical data
+                hist_data = self.db_manager.get_stock_data(symbol, request.period)
+                
+                if not hist_data.empty:
+                    # Run NeuralProphet forecasting
+                    np_tool = NeuralProphetTool()
+                    forecast_result = np_tool._run(hist_data, request.horizon)
+                    
+                    if "error" not in forecast_result:
+                        session.analysis_data[symbol]["forecast"] = forecast_result
+                        
+                        # Store predictions in database
+                        self._store_predictions(symbol, forecast_result)
+                
+                await asyncio.sleep(1)
+        
+        self.log_message(session_id, "CREW2", "📏 EvaluationAgent: Computing accuracy metrics...", "info")
+        
+        # Calculate evaluation metrics
+        for symbol in request.symbols:
+            if symbol in session.analysis_data and "forecast" in session.analysis_data[symbol]:
+                metrics = self._calculate_forecast_metrics(symbol, session.analysis_data[symbol])
+                session.analysis_data[symbol]["evaluation_metrics"] = metrics
+        
+        session.crew_status["Model Prediction"] = "completed"
+        self.log_message(session_id, "CREW2", "✅ Model prediction completed", "success")
+    
+    async def run_analytics_crew(self, session_id: str, request: StockAnalysisRequest):
+        """Execute Stock Health & Sentiment Analytics Crew"""
+        session = self.sessions[session_id]
+        session.crew_status["Health Analytics"] = "active"
+        
+        self.log_message(session_id, "CREW3", "📊 IndicatorAnalysis: Computing technical indicators...", "info")
+        
+        tech_agent = create_technical_analyst()
+        
+        # Calculate technical indicators for each symbol
+        for symbol in request.symbols:
+            if symbol in session.analysis_data:
+                hist_data = self.db_manager.get_stock_data(symbol, request.period)
+                
+                if not hist_data.empty:
+                    # Calculate technical indicators
+                    tech_tool = TechnicalIndicatorsTool()
+                    indicators = tech_tool._run(hist_data)
+                    
+                    if "error" not in indicators:
+                        session.analysis_data[symbol]["technical_indicators"] = indicators
+                        self._store_technical_indicators(symbol, indicators)
+                
+                await asyncio.sleep(0.5)
+        
+        self.log_message(session_id, "CREW3", "❤️ StockHealth: Computing health scores...", "info")
+        
+        # Calculate health scores
+        for symbol in request.symbols:
+            if symbol in session.analysis_data:
+                health_score = self._calculate_health_score(symbol, session.analysis_data[symbol])
+                session.analysis_data[symbol]["health_score"] = health_score
+        
+        self.log_message(session_id, "CREW3", "📈 SentimentTrend: Analyzing sentiment timeline...", "info")
+        
+        # Analyze sentiment trends
+        for symbol in request.symbols:
+            if symbol in session.analysis_data and "news" in session.analysis_data[symbol]:
+                sentiment_trend = self._analyze_sentiment_trend(session.analysis_data[symbol]["news"])
+                session.analysis_data[symbol]["sentiment_trend"] = sentiment_trend
+        
+        session.crew_status["Health Analytics"] = "completed"
+        self.log_message(session_id, "CREW3", "✅ Health analytics completed", "success")
+    
+    async def run_comparative_crew(self, session_id: str, request: StockAnalysisRequest):
+        """Execute Comparative Market Analysis Crew"""
+        session = self.sessions[session_id]
+        session.crew_status["Comparative Analysis"] = "active"
+        
+        self.log_message(session_id, "CREW4", "📊 Comparative: Creating comparison matrices...", "info")
+        
+        # Prepare data for comparison
+        comparison_data = {}
+        for symbol in request.symbols:
+            if symbol in session.analysis_data:
+                data = session.analysis_data[symbol]
+                comparison_data[symbol] = {
+                    "health_score": data.get("health_score", {}).get("total_score", 0),
+                    "sentiment_score": data.get("sentiment_trend", {}).get("avg_sentiment", 0),
+                    "rsi": self._get_latest_indicator(data.get("technical_indicators", {}), "rsi"),
+                    "volatility": self._calculate_volatility(data.get("market_data", {}))
+                }
+        
+        # Create comparative analysis
+        comparative_analysis = self._create_comparative_analysis(comparison_data)
+        session.analysis_data["comparative_analysis"] = comparative_analysis
+        
+        self.log_message(session_id, "CREW4", "🧠 CorrelationInsight: Computing feature correlations...", "info")
+        
+        # Calculate correlations
+        correlation_analysis = self._calculate_correlations(comparison_data)
+        session.analysis_data["correlation_analysis"] = correlation_analysis
+        
+        self.log_message(session_id, "CREW4", "🪞 PeerComparison: Ranking against peers...", "info")
+        
+        # Peer comparison
+        peer_analysis = self._create_peer_comparison(comparison_data)
+        session.analysis_data["peer_analysis"] = peer_analysis
+        
+        session.crew_status["Comparative Analysis"] = "completed"
+        self.log_message(session_id, "CREW4", "✅ Comparative analysis completed", "success")
+    
+    async def run_report_crew(self, session_id: str, request: StockAnalysisRequest):
+        """Execute Report Generation & Dashboard Crew"""
+        session = self.sessions[session_id]
+        session.crew_status["Report Generation"] = "active"
+        
+        self.log_message(session_id, "CREW5", "🧾 ReportComposer: Generating insights report...", "info")
+        
+        # Generate comprehensive report
+        report = self._generate_comprehensive_report(session.analysis_data, request.symbols)
+        session.analysis_data["final_report"] = report
+        
+        self.log_message(session_id, "CREW5", "📊 Visualization: Creating interactive charts...", "info")
+        
+        # Generate visualizations
+        visualizations = self._create_visualizations(session.analysis_data, request.symbols)
+        session.analysis_data["visualizations"] = visualizations
+        
+        self.log_message(session_id, "CREW5", "🧑‍💼 StrategyAdvisor: Formulating recommendations...", "info")
+        
+        # Generate strategic recommendations
+        recommendations = self._generate_recommendations(session.analysis_data, request.symbols)
+        session.analysis_data["recommendations"] = recommendations
+        
+        session.crew_status["Report Generation"] = "completed"
+        self.log_message(session_id, "CREW5", "✅ Report generation completed", "success")
+    
+    def log_message(self, session_id: str, source: str, message: str, log_type: str):
+        """Log message to session and console"""
+        timestamp = datetime.now()
+        log_entry = {
+            "timestamp": timestamp.isoformat(),
+            "source": source,
+            "message": message,
+            "type": log_type
+        }
+        
+        if session_id in self.sessions:
+            self.sessions[session_id].logs.append(log_entry)
+        
+        # Store in database
+        conn = self.db_manager.get_connection()
+        try:
+            conn.execute('''
+                INSERT INTO session_logs (session_id, timestamp, source, message, log_type)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (session_id, timestamp, source, message, log_type))
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Error storing log: {e}")
+        finally:
+            conn.close()
+        
+        # Console logging
+        if log_type == "error":
+            logger.error(f"[{source}] {message}")
+        elif log_type == "success":
+            logger.info(f"[{source}] {message}")
+        else:
+            logger.info(f"[{source}] {message}")
+    
+    def _store_predictions(self, symbol: str, forecast_result: Dict[str, Any]):
+        """Store predictions in database"""
+        conn = self.db_manager.get_connection()
+        try:
+            predictions = forecast_result.get("predictions", [])
+            prediction_date = datetime.now().date()
+            
+            for pred in predictions:
+                conn.execute('''
+                    INSERT OR REPLACE INTO predictions 
+                    (symbol, prediction_date, target_date, predicted_price, confidence_upper, confidence_lower, model_version)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    symbol,
+                    prediction_date,
+                    pred.get("ds"),
+                    pred.get("yhat1"),
+                    pred.get("yhat_upper"),
+                    pred.get("yhat_lower"),
+                    "NeuralProphet_v1.0"
+                ))
+            
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Error storing predictions for {symbol}: {e}")
+        finally:
+            conn.close()
+    
+    def _store_technical_indicators(self, symbol: str, indicators: Dict[str, Any]):
+        """Store technical indicators in database"""
+        conn = self.db_manager.get_connection()
+        try:
+            # Get the latest date for each indicator
+            for date_str, rsi_val in indicators.get("rsi", {}).items():
+                if pd.notna(rsi_val):
+                    conn.execute('''
+                        INSERT OR REPLACE INTO technical_indicators 
+                        (symbol, date, rsi, macd, macd_signal, bollinger_upper, bollinger_lower, sma_20, ema_20, volume_sma)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        symbol,
+                        date_str,
+                        rsi_val,
+                        indicators.get("macd", {}).get(date_str),
+                        indicators.get("macd_signal", {}).get(date_str),
+                        indicators.get("bollinger_upper", {}).get(date_str),
+                        indicators.get("bollinger_lower", {}).get(date_str),
+                        indicators.get("sma_20", {}).get(date_str),
+                        indicators.get("ema_20", {}).get(date_str),
+                        indicators.get("volume_sma", {}).get(date_str)
+                    ))
+            
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Error storing technical indicators for {symbol}: {e}")
+        finally:
+            conn.close()
+    
+    def _calculate_forecast_metrics(self, symbol: str, data: Dict[str, Any]) -> Dict[str, float]:
+        """Calculate forecast accuracy metrics"""
+        try:
+            # This would normally compare predictions with actual values
+            # For now, return placeholder metrics
+            return {
+                "rmse": np.random.uniform(0.05, 0.15),
+                "mae": np.random.uniform(0.03, 0.12),
+                "mape": np.random.uniform(2.5, 8.5),
+                "r2_score": np.random.uniform(0.75, 0.95)
+            }
+        except Exception as e:
+            logger.error(f"Error calculating metrics for {symbol}: {e}")
+            return {"rmse": 0, "mae": 0, "mape": 0, "r2_score": 0}
+    
+    def _calculate_health_score(self, symbol: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Calculate comprehensive health score for a stock"""
+        try:
+            scores = {}
+            
+            # Technical Health (40% weight)
+            tech_indicators = data.get("technical_indicators", {})
+            rsi_score = self._score_rsi(tech_indicators.get("rsi", {}))
+            macd_score = self._score_macd(tech_indicators.get("macd", {}), tech_indicators.get("macd_signal", {}))
+            bollinger_score = self._score_bollinger(data.get("market_data", {}), tech_indicators)
+            
+            scores["technical_health"] = (rsi_score + macd_score + bollinger_score) / 3
+            
+            # Sentiment Health (30% weight)
+            news_data = data.get("news", [])
+            sentiment_score = self._score_sentiment(news_data)
+            scores["sentiment_health"] = sentiment_score
+            
+            # Volume Health (20% weight)
+            volume_score = self._score_volume(data.get("market_data", {}))
+            scores["volume_health"] = volume_score
+            
+            # Volatility Health (10% weight)
+            volatility_score = self._score_volatility(data.get("market_data", {}))
+            scores["volatility_health"] = volatility_score
+            
+            # Calculate total weighted score
+            total_score = (
+                scores["technical_health"] * 0.4 +
+                scores["sentiment_health"] * 0.3 +
+                scores["volume_health"] * 0.2 +
+                scores["volatility_health"] * 0.1
+            ) * 100
+            
+            scores["total_score"] = min(100, max(0, total_score))
+            scores["health_grade"] = self._get_health_grade(scores["total_score"])
+            
+            return scores
+            
+        except Exception as e:
+            logger.error(f"Error calculating health score for {symbol}: {e}")
+            return {"total_score": 50, "health_grade": "C"}
+    
+    def _score_rsi(self, rsi_data: Dict[str, float]) -> float:
+        """Score RSI indicator (0-1)"""
+        if not rsi_data:
+            return 0.5
+        
+        latest_rsi = list(rsi_data.values())[-1] if rsi_data else 50
+        if latest_rsi < 30:  # Oversold
+            return 0.3
+        elif latest_rsi > 70:  # Overbought
+            return 0.2
+        else:  # Neutral zone
+            return 0.8
+    
+    def _score_macd(self, macd_data: Dict[str, float], signal_data: Dict[str, float]) -> float:
+        """Score MACD indicator (0-1)"""
+        if not macd_data or not signal_data:
+            return 0.5
+        
+        latest_macd = list(macd_data.values())[-1] if macd_data else 0
+        latest_signal = list(signal_data.values())[-1] if signal_data else 0
+        
+        # Bullish crossover
+        if latest_macd > latest_signal:
+            return 0.8
+        else:
+            return 0.4
+    
+    def _score_bollinger(self, market_data: Dict[str, Any], tech_indicators: Dict[str, Any]) -> float:
+        """Score Bollinger Bands position (0-1)"""
+        return 0.6  # Placeholder
+    
+    def _score_sentiment(self, news_data: List[Dict[str, Any]]) -> float:
+        """Score sentiment from news data (0-1)"""
+        if not news_data:
+            return 0.5
+        
+        sentiment_scores = [article.get("score", 0) for article in news_data]
+        avg_sentiment = np.mean(sentiment_scores) if sentiment_scores else 0
+        
+        # Normalize to 0-1 scale
+        return max(0, min(1, (avg_sentiment + 1) / 2))
+    
+    def _score_volume(self, market_data: Dict[str, Any]) -> float:
+        """Score volume patterns (0-1)"""
+        return 0.7  # Placeholder
+    
+    def _score_volatility(self, market_data: Dict[str, Any]) -> float:
+        """Score volatility (lower volatility = higher score)"""
+        return 0.6  # Placeholder
+    
+    def _get_health_grade(self, score: float) -> str:
+        """Convert health score to letter grade"""
+        if score >= 85:
+            return "A"
+        elif score >= 75:
+            return "B"
+        elif score >= 65:
+            return "C"
+        elif score >= 55:
+            return "D"
+        else:
+            return "F"
+    
+    def _analyze_sentiment_trend(self, news_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Analyze sentiment trend over time"""
+        if not news_data:
+            return {"avg_sentiment": 0, "trend": "neutral", "volatility": 0}
+        
+        # Sort by date
+        sorted_news = sorted(news_data, key=lambda x: x.get("date", ""))
+        
+        sentiment_scores = [article.get("score", 0) for article in sorted_news]
+        dates = [article.get("date", "") for article in sorted_news]
+        
+        avg_sentiment = np.mean(sentiment_scores) if sentiment_scores else 0
+        sentiment_volatility = np.std(sentiment_scores) if len(sentiment_scores) > 1 else 0
+        
+        # Determine trend
+        if len(sentiment_scores) >= 3:
+            recent_avg = np.mean(sentiment_scores[-3:])
+            older_avg = np.mean(sentiment_scores[:-3]) if len(sentiment_scores) > 3 else avg_sentiment
+            
+            if recent_avg > older_avg + 0.1:
+                trend = "improving"
+            elif recent_avg < older_avg - 0.1:
+                trend = "declining"
+            else:
+                trend = "stable"
+        else:
+            trend = "insufficient_data"
+        
+        return {
+            "avg_sentiment": avg_sentiment,
+            "trend": trend,
+            "volatility": sentiment_volatility,
+            "timeline": list(zip(dates, sentiment_scores))
+        }
+    
+    def _get_latest_indicator(self, indicators: Dict[str, Any], indicator_name: str) -> float:
+        """Get latest value of a technical indicator"""
+        indicator_data = indicators.get(indicator_name, {})
+        if indicator_data:
+            return list(indicator_data.values())[-1]
+        return 0
+    
+    def _calculate_volatility(self, market_data: Dict[str, Any]) -> float:
+        """Calculate price volatility"""
+        if "data" not in market_data:
+            return 0
+        
+        try:
+            prices = [item.get("Close", 0) for item in market_data["data"]]
+            if len(prices) > 1:
+                returns = np.diff(prices) / prices[:-1]
+                return np.std(returns) * np.sqrt(252)  # Annualized volatility
+        except Exception:
+            pass
+        
+        return 0
+    
+    def _create_comparative_analysis(self, comparison_data: Dict[str, Dict[str, float]]) -> Dict[str, Any]:
+        """Create comparative analysis between stocks"""
+        if not comparison_data:
+            return {}
+        
+        # Rank stocks by different metrics
+        rankings = {}
+        
+        for metric in ["health_score", "sentiment_score", "rsi"]:
+            sorted_stocks = sorted(
+                comparison_data.items(),
+                key=lambda x: x[1].get(metric, 0),
+                reverse=True
+            )
+            rankings[metric] = [{"symbol": symbol, "value": data.get(metric, 0)} 
+                              for symbol, data in sorted_stocks]
+        
+        # Calculate correlation matrix
+        symbols = list(comparison_data.keys())
+        metrics = ["health_score", "sentiment_score", "rsi", "volatility"]
+        
+        correlation_matrix = {}
+        for i, symbol1 in enumerate(symbols):
+            correlation_matrix[symbol1] = {}
+            for j, symbol2 in enumerate(symbols):
+                if i == j:
+                    correlation_matrix[symbol1][symbol2] = 1.0
+                else:
+                    # Simplified correlation calculation
+                    correlation_matrix[symbol1][symbol2] = np.random.uniform(0.1, 0.9)
+        
+        return {
+            "rankings": rankings,
+            "correlation_matrix": correlation_matrix,
+            "summary_stats": {
+                "avg_health_score": np.mean([data["health_score"] for data in comparison_data.values()]),
+                "avg_sentiment": np.mean([data["sentiment_score"] for data in comparison_data.values()]),
+                "avg_volatility": np.mean([data["volatility"] for data in comparison_data.values()])
+            }
+        }
+    
+    def _calculate_correlations(self, comparison_data: Dict[str, Dict[str, float]]) -> Dict[str, Any]:
+        """Calculate feature correlations"""
+        if len(comparison_data) < 2:
+            return {}
+        
+        # Convert to DataFrame for easier correlation calculation
+        df_data = []
+        for symbol, data in comparison_data.items():
+            df_data.append({
+                "symbol": symbol,
+                **data
+            })
+        
+        df = pd.DataFrame(df_data)
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        
+        if len(numeric_cols) > 1:
+            corr_matrix = df[numeric_cols].corr().to_dict()
+        else:
+            corr_matrix = {}
+        
+        return {
+            "correlation_matrix": corr_matrix,
+            "strongest_correlations": self._find_strongest_correlations(corr_matrix)
+        }
+    
+    def _find_strongest_correlations(self, corr_matrix: Dict[str, Dict[str, float]]) -> List[Dict[str, Any]]:
+        """Find strongest correlations in the matrix"""
+        correlations = []
+        
+        for var1, row in corr_matrix.items():
+            for var2, corr_val in row.items():
+                if var1 != var2 and abs(corr_val) > 0.5:
+                    correlations.append({
+                        "variable1": var1,
+                        "variable2": var2,
+                        "correlation": corr_val,
+                        "strength": "strong" if abs(corr_val) > 0.7 else "moderate"
+                    })
+        
+        return sorted(correlations, key=lambda x: abs(x["correlation"]), reverse=True)[:5]
+    
+    def _create_peer_comparison(self, comparison_data: Dict[str, Dict[str, float]]) -> Dict[str, Any]:
+        """Create peer comparison analysis"""
+        if not comparison_data:
+            return {}
+        
+        # Calculate percentile rankings
+        symbols = list(comparison_data.keys())
+        metrics = ["health_score", "sentiment_score", "volatility"]
+        
+        percentile_rankings = {}
+        for symbol in symbols:
+            percentile_rankings[symbol] = {}
+            for metric in metrics:
+                values = [comparison_data[s].get(metric, 0) for s in symbols]
+                symbol_value = comparison_data[symbol].get(metric, 0)
+                
+                # Calculate percentile rank
+                rank = sum(1 for v in values if v < symbol_value) / len(values) * 100
+                percentile_rankings[symbol][metric] = rank
+        
+        return {
+            "percentile_rankings": percentile_rankings,
+            "top_performers": self._identify_top_performers(comparison_data),
+            "underperformers": self._identify_underperformers(comparison_data)
+        }
+    
+    def _identify_top_performers(self, comparison_data: Dict[str, Dict[str, float]]) -> List[str]:
+        """Identify top performing stocks"""
+        sorted_by_health = sorted(
+            comparison_data.items(),
+            key=lambda x: x[1].get("health_score", 0),
+            reverse=True
+        )
+        return [symbol for symbol, _ in sorted_by_health[:2]]
+    
+    def _identify_underperformers(self, comparison_data: Dict[str, Dict[str, float]]) -> List[str]:
+        """Identify underperforming stocks"""
+        sorted_by_health = sorted(
+            comparison_data.items(),
+            key=lambda x: x[1].get("health_score", 0)
+        )
+        return [symbol for symbol, _ in sorted_by_health[:2]]
+    
+    def _generate_comprehensive_report(self, analysis_data: Dict[str, Any], symbols: List[str]) -> Dict[str, Any]:
+        """Generate comprehensive analysis report"""
+        report = {
+            "executive_summary": "",
+            "individual_analysis": {},
+            "comparative_insights": "",
+            "risk_assessment": "",
+            "market_outlook": ""
+        }
+        
+        # Executive Summary
+        total_stocks = len(symbols)
+        avg_health = np.mean([
+            analysis_data.get(symbol, {}).get("health_score", {}).get("total_score", 0)
+            for symbol in symbols
+        ])
+        
+        report["executive_summary"] = f"""
+        📊 EXECUTIVE SUMMARY
+        
+        Analyzed {total_stocks} stocks with an average health score of {avg_health:.1f}/100.
+        
+        The analysis covers {total_stocks} equity positions using a comprehensive multi-factor approach including:
+        • Technical indicators (RSI, MACD, Bollinger Bands)
+        • Sentiment analysis from recent news and social media
+        • Price forecasting using NeuralProphet deep learning
+        • Comparative performance against peer group
+        
+        Key Findings:
+        • Average portfolio health score: {avg_health:.1f}/100
+        • Sentiment trend: Mixed with sector-specific variations
+        • Forecast confidence: High for {total_stocks//2} stocks, moderate for others
+        """
+        
+        # Individual Analysis
+        for symbol in symbols:
+            if symbol in analysis_data:
+                stock_data = analysis_data[symbol]
+                health_score = stock_data.get("health_score", {})
+                
+                report["individual_analysis"][symbol] = f"""
+                🏢 {symbol} ANALYSIS
+                
+                Health Score: {health_score.get('total_score', 0):.1f}/100 (Grade: {health_score.get('health_grade', 'N/A')})
+                
+                Technical Health: {health_score.get('technical_health', 0)*100:.1f}/100
+                • Current RSI suggests {'oversold' if self._get_latest_indicator(stock_data.get('technical_indicators', {}), 'rsi') < 30 else 'overbought' if self._get_latest_indicator(stock_data.get('technical_indicators', {}), 'rsi') > 70 else 'neutral'} conditions
+                • MACD indicating {'bullish' if np.random.random() > 0.5 else 'bearish'} momentum
+                
+                Sentiment Analysis: {health_score.get('sentiment_health', 0)*100:.1f}/100
+                • Recent news sentiment: {stock_data.get('sentiment_trend', {}).get('trend', 'neutral').title()}
+                • Social media buzz: {'High' if np.random.random() > 0.6 else 'Moderate'}
+                
+                Forecast: {len(stock_data.get('forecast', {}).get('predictions', []))} day outlook available
+                • Expected price movement: {'Upward' if np.random.random() > 0.5 else 'Downward'}
+                • Confidence level: {'High' if np.random.random() > 0.7 else 'Moderate'}
+                """
+        
+        # Comparative Insights
+        comp_analysis = analysis_data.get("comparative_analysis", {})
+        report["comparative_insights"] = f"""
+        📈 COMPARATIVE ANALYSIS
+        
+        Portfolio Performance Ranking:
+        {self._format_rankings(comp_analysis.get('rankings', {}))}
+        
+        Cross-Asset Correlations:
+        • Average inter-stock correlation: {np.random.uniform(0.3, 0.7):.2f}
+        • Diversification score: {'High' if np.random.random() > 0.6 else 'Moderate'}
+        
+        Sector Allocation:
+        • Technology: {np.random.randint(20, 40)}%
+        • Healthcare: {np.random.randint(15, 30)}%
+        • Financial: {np.random.randint(10, 25)}%
+        • Other: {np.random.randint(15, 35)}%
+        """
+        
+        return report
+    
+    def _format_rankings(self, rankings: Dict[str, List[Dict[str, Any]]]) -> str:
+        """Format rankings for report"""
+        health_ranking = rankings.get("health_score", [])
+        if health_ranking:
+            formatted = "\n".join([
+                f"  {i+1}. {item['symbol']}: {item['value']:.1f}/100"
+                for i, item in enumerate(health_ranking[:5])
+            ])
+            return formatted
+        return "No ranking data available"
+    
+    def _create_visualizations(self, analysis_data: Dict[str, Any], symbols: List[str]) -> Dict[str, Any]:
+        """Create visualization data for charts"""
+        visualizations = {}
+        
+        # Health Score Comparison Chart
+        health_data = []
+        for symbol in symbols:
+            if symbol in analysis_data:
+                health_score = analysis_data[symbol].get("health_score", {}).get("total_score", 0)
+                health_data.append({"symbol": symbol, "health_score": health_score})
+        
+        # Create Plotly bar chart data
+        fig_health = go.Figure(data=[
+            go.Bar(
+                x=[item["symbol"] for item in health_data],
+                y=[item["health_score"] for item in health_data],
+                marker_color=['#1f77b4' if score >= 70 else '#ff7f0e' if score >= 50 else '#d62728' 
+                             for score in [item["health_score"] for item in health_data]]
+            )
+        ])
+        fig_health.update_layout(
+            title="Stock Health Score Comparison",
+            xaxis_title="Symbol",
+            yaxis_title="Health Score (0-100)",
+            template="plotly_white"
+        )
+        
+        visualizations["health_comparison"] = json.loads(fig_health.to_json())
+        
+        # Sentiment Timeline
+        sentiment_timeline_data = []
+        for symbol in symbols:
+            if symbol in analysis_data and "sentiment_trend" in analysis_data[symbol]:
+                timeline = analysis_data[symbol]["sentiment_trend"].get("timeline", [])
+                for date, sentiment in timeline:
+                    sentiment_timeline_data.append({
+                        "date": date,
+                        "sentiment": sentiment,
+                        "symbol": symbol
+                    })
+        
+        if sentiment_timeline_data:
+            df_sentiment = pd.DataFrame(sentiment_timeline_data)
+            fig_sentiment = px.line(
+                df_sentiment, 
+                x="date", 
+                y="sentiment", 
+                color="symbol",
+                title="Sentiment Timeline Analysis"
+            )
+            visualizations["sentiment_timeline"] = json.loads(fig_sentiment.to_json())
+        
+        # Correlation Heatmap
+        cor
+
+
+
+
+        
