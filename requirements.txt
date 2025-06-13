@@ -1,0 +1,47 @@
+# FastAPI and ASGI server
+fastapi
+uvicorn
+
+# Database
+sqlalchemy
+
+# Vector Store
+chromadb
+
+# Agent Orchestration
+crewai
+
+# Forecasting
+neuralprophet
+torch
+
+# Transformers (FinBERT)
+transformers
+
+# Financial Data
+yfinance
+
+# Web Scraping
+firecrawl-py
+
+# Visualization
+plotly
+
+# Data Processing
+pandas
+numpy
+scikit-learn
+
+# WebSocket and Async
+websockets
+aiofiles
+asyncio  # Note: Only needed explicitly if targeting versions < 3.7
+
+# Environment Variables
+python-dotenv
+
+# File Upload Handling
+python-multipart
+
+# Pydantic for validation
+pydantic
