@@ -1,4 +1,5 @@
 # ===== config/database.py =====
+from models.database_models import *  # Import all models
 from sqlalchemy import create_engine, MetaData
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -30,7 +31,6 @@ async def init_database():
     os.makedirs("logs", exist_ok=True)
     
     # Create SQLAlchemy tables
-    from models.database_models import *  # Import all models
     Base.metadata.create_all(bind=engine)
     
     # Initialize ChromaDB
@@ -51,3 +51,4 @@ def get_db():
 def get_chroma_collection():
     """Get ChromaDB collection"""
     return chroma_collection
+
