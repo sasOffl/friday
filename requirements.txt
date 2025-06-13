@@ -45,3 +45,4 @@ python-multipart
 
 # Pydantic for validation
 pydantic
+pydantic-settings

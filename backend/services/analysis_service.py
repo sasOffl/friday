@@ -8,24 +8,24 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
-from ..config.database import get_database_session
-from ..models.database_models import AnalysisSession
-from ..models.pydantic_models import AnalysisRequest, AnalysisResponse
-from ..crews.data_ingestion_crew import DataIngestionCrew
-from ..crews.model_prediction_crew import ModelPredictionCrew
-from ..crews.health_analytics_crew import HealthAnalyticsCrew
-from ..crews.comparative_analysis_crew import ComparativeAnalysisCrew
-from ..crews.report_generation_crew import ReportGenerationCrew
-from ..utils.logger import AnalysisLogger
-from ..utils.exceptions import AnalysisException
-from .websocket_service import WebSocketService
+from backend.config.database import get_database_session
+from backend.models.database_models import AnalysisSession
+from backend.models.pydantic_models import AnalysisRequest, AnalysisResponse
+from backend.crews.data_ingestion_crew import DataIngestionCrew
+from backend.crews.model_prediction_crew import ModelPredictionCrew
+from backend.crews.health_analytics_crew import HealthAnalyticsCrew
+from backend.crews.comparative_analysis_crew import ComparativeAnalysisCrew
+from backend.crews.report_generation_crew import ReportGenerationCrew
+from backend.utils.logger import AnalysisLogger
+from backend.utils.exceptions import AnalysisException
+from backend.services.websocket_service import WebSocketService
 
 
 class AnalysisService:
     """Service for orchestrating comprehensive stock analysis"""
     
     def __init__(self):
-        self.logger = AnalysisLogger()
+        self.logger = AnalysisLogger(session_id="temp-agent-session")
         self.websocket_service = WebSocketService()
         self.active_sessions: Dict[str, Dict[str, Any]] = {}
     

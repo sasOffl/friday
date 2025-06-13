@@ -12,16 +12,16 @@ import logging
 from datetime import datetime
 import uuid
 
-from services.websocket_service import WebSocketService
-from utils.logger import AnalysisLogger
-from utils.exceptions import AnalysisException
+from backend.services.websocket_service import WebSocketService
+from backend.utils.logger import AnalysisLogger
+from backend.utils.exceptions import AnalysisException
 
 # Initialize router
 router = APIRouter()
 
 # Initialize services
 websocket_service = WebSocketService()
-logger = AnalysisLogger()
+logger = AnalysisLogger(session_id="temp-agent-session")
 
 # Connection manager for active WebSocket connections
 class ConnectionManager:

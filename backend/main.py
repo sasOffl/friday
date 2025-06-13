@@ -1,77 +1,128 @@
-# main.py - FastAPI application entry point
+import os
+import sys
+from pathlib import Path
+
+# Add the backend directory to Python path
+backend_dir = Path(__file__).parent
+sys.path.insert(0, str(backend_dir))
+
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from contextlib import asynccontextmanager
+from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-import logging
+import asyncio
+from contextlib import asynccontextmanager
 
-from config.database import init_database
+# Import local modules
+from config.database import init_database, get_database_session
+from backend.config.settings import get_settings
 from routers import analysis, websocket
-from utils.logger import setup_logging
 
-# Configure logging
-setup_logging()
-logger = logging.getLogger(__name__)
+# Global settings
+settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage application lifecycle"""
+    # Startup
+    print("🚀 Starting McKinsey Stock Performance Monitor...")
+    
+    # Initialize database
     try:
-        logger.info("Starting McKinsey Stock Performance Monitor...")
-        # Initialize database and ChromaDB
         await init_database()
-        logger.info("Database initialized successfully")
-        yield
+        print("✅ Database initialized successfully")
     except Exception as e:
-        logger.error(f"Startup failed: {str(e)}")
-        raise
-    finally:
-        logger.info("Shutting down McKinsey Stock Performance Monitor...")
+        print(f"❌ Database initialization failed: {e}")
+    
+    yield
+    
+    # Shutdown
+    print("🛑 Shutting down McKinsey Stock Performance Monitor...")
 
 # Create FastAPI app
 app = FastAPI(
     title="McKinsey Stock Performance Monitor",
-    description="AI-powered stock analysis system with real-time monitoring",
+    description="AI-powered stock analysis system with real-time monitoring and predictions",
     version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
     lifespan=lifespan
 )
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Set specific origins in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Include routers
-app.include_router(analysis.router, prefix="/api")
-app.include_router(websocket.router, prefix="/ws")
+app.include_router(analysis.router, prefix="/api", tags=["analysis"])
+app.include_router(websocket.router, prefix="/ws", tags=["websocket"])
 
-# Mount static files for frontend
-app.mount("/static", StaticFiles(directory="frontend"), name="static")
+# Mount static files (frontend)
+frontend_dir = backend_dir.parent / "frontend"
+if frontend_dir.exists():
+    app.mount("/frontend", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 async def root():
-    """Root endpoint"""
-    return {
-        "message": "McKinsey Stock Performance Monitor API",
-        "version": "1.0.0",
-        "status": "operational"
-    }
+    """Root endpoint - redirect to frontend"""
+    return """
+    <html>
+        <head>
+            <title>McKinsey Stock Performance Monitor</title>
+            <style>
+                body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+                .container { max-width: 600px; margin: 0 auto; }
+                .button { 
+                    display: inline-block; 
+                    padding: 12px 24px; 
+                    background-color: #007bff; 
+                    color: white; 
+                    text-decoration: none; 
+                    border-radius: 4px; 
+                    margin: 10px;
+                }
+                .button:hover { background-color: #0056b3; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>🏗️ McKinsey Stock Performance Monitor</h1>
+                <p>AI-powered stock analysis system with real-time monitoring and predictions</p>
+                <div>
+                    <a href="/frontend/" class="button">📊 Dashboard</a>
+                    <a href="/docs" class="button">📚 API Documentation</a>
+                </div>
+                <p><strong>Status:</strong> ✅ System Online</p>
+            </div>
+        </body>
+    </html>
+    """
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "service": "stock-monitor"}
+    try:
+        session = next(get_database_session())
+        session.close()
+        return {
+            "status": "healthy",
+            "service": "McKinsey Stock Performance Monitor",
+            "version": "1.0.0",
+            "database": "connected"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Service unhealthy: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
-        port=8000,
+        host=settings.HOST,
+        port=settings.PORT,
         reload=True,
-        log_level="info"
+        log_level=settings.LOG_LEVEL.lower()
     )

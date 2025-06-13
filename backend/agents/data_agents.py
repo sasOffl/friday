@@ -11,11 +11,11 @@ import pandas as pd
 from datetime import datetime, timedelta
 import logging
 
-from ..tools.market_data_tools import YahooFinanceTool
-from ..tools.sentiment_tools import FirecrawlScraper, FinBERTWrapper, ChromaDBTool
-from ..utils.logger import AnalysisLogger
+from backend.tools.market_data_tools import YahooFinanceTool
+from backend.tools.sentiment_tools import FirecrawlScraper, FinBERTWrapper, ChromaDBTool
+from backend.utils.logger import AnalysisLogger
 
-logger = AnalysisLogger()
+logger = AnalysisLogger(session_id="temp-agent-session")
 
 
 class MarketDataLoaderAgent:

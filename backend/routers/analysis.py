@@ -11,12 +11,12 @@ import uuid
 from datetime import datetime, timedelta
 import logging
 
-from models.pydantic_models import AnalysisRequest, AnalysisResponse, StockInsight
-from services.analysis_service import AnalysisService
-from services.data_service import DataService
-from utils.exceptions import AnalysisException, DataFetchException
-from utils.helpers import validate_stock_symbols, calculate_date_range
-from utils.logger import AnalysisLogger
+from backend.models.pydantic_models import AnalysisRequest, AnalysisResponse, StockInsight
+from backend.services.analysis_service import AnalysisService
+from backend.services.data_service import DataService
+from backend.utils.exceptions import AnalysisException, DataFetchException
+from backend.utils.helpers import validate_stock_symbols, calculate_date_range
+from backend.utils.logger import AnalysisLogger
 
 # Initialize router
 router = APIRouter(
@@ -28,7 +28,7 @@ router = APIRouter(
 # Initialize services
 analysis_service = AnalysisService()
 data_service = DataService()
-logger = AnalysisLogger()
+logger = AnalysisLogger(session_id="temp-agent-session")
 
 # In-memory storage for active sessions (in production, use Redis or database)
 active_sessions: Dict[str, Dict[str, Any]] = {}

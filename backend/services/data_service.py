@@ -13,16 +13,16 @@ from ..models.database_models import (
     StockData, NewsArticle, TechnicalIndicator, 
     Prediction, AnalysisSession
 )
-from ..utils.logger import AnalysisLogger
-from ..utils.exceptions import DataFetchException
-from ..utils.helpers import validate_stock_symbols, calculate_date_range
+from backend.utils.logger import AnalysisLogger
+from backend.utils.exceptions import DataFetchException
+from backend.utils.helpers import validate_stock_symbols, calculate_date_range
 
 
 class DataService:
     """Service for data storage and retrieval operations"""
     
     def __init__(self):
-        self.logger = AnalysisLogger()
+        self.logger = AnalysisLogger(session_id="temp-agent-session")
     
     def get_historical_data(
         self, 

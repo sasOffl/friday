@@ -28,7 +28,7 @@ class ReportGenerationCrew:
     def __init__(self, session_id: str, shared_memory: Dict[str, Any]):
         self.session_id = session_id
         self.shared_memory = shared_memory
-        self.logger = AnalysisLogger()
+        self.logger = AnalysisLogger(session_id="temp-agent-session")
         self.plot_toolkit = PlotlyToolKit()
         
         # Initialize agents

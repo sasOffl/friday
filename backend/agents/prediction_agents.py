@@ -12,10 +12,10 @@ import numpy as np
 from datetime import datetime, timedelta
 import logging
 
-from ..tools.prediction_tools import NeuralProphetWrapper
-from ..utils.logger import AnalysisLogger
+from backend.tools.prediction_tools import NeuralProphetWrapper
+from backend.utils.logger import AnalysisLogger
 
-logger = AnalysisLogger()
+logger = AnalysisLogger(session_id="temp-agent-session")
 
 
 class ForecastAgent:

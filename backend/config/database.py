@@ -1,20 +1,23 @@
-# ===== config/database.py =====
-from models.database_models import *  # Import all models
 from sqlalchemy import create_engine, MetaData
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import chromadb
 import os
-from pathlib import Path
 
-from .settings import settings
+# Import config and models
+from config.settings import get_settings
+from models.database_models import (
+    StockData, NewsArticle, TechnicalIndicator, Prediction,
+    AnalysisSession, SessionLog
+)
+
+settings = get_settings()
 
 # SQLAlchemy setup
 engine = create_engine(
-    settings.database_url,
-    connect_args={"check_same_thread": False} if "sqlite" in settings.database_url else {}
+    settings.DATABASE_URL,
+    connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
 )
-
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -25,23 +28,19 @@ chroma_collection = None
 async def init_database():
     """Initialize database and ChromaDB"""
     global chroma_client, chroma_collection
-    
-    # Create data directory if it doesn't exist
+
     os.makedirs("data", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
-    
-    # Create SQLAlchemy tables
+
     Base.metadata.create_all(bind=engine)
-    
-    # Initialize ChromaDB
-    chroma_client = chromadb.PersistentClient(path=settings.chromadb_path)
+
+    chroma_client = chromadb.PersistentClient(path=settings.CHROMADB_PATH)
     chroma_collection = chroma_client.get_or_create_collection(
         name="stock_news_embeddings",
         metadata={"description": "Stock news articles with embeddings"}
     )
 
-def get_db():
-    """Get database session"""
+def get_database_session():
     db = SessionLocal()
     try:
         yield db
@@ -49,6 +48,4 @@ def get_db():
         db.close()
 
 def get_chroma_collection():
-    """Get ChromaDB collection"""
     return chroma_collection
-

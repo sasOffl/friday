@@ -13,10 +13,10 @@ from datetime import datetime, timedelta
 import json
 import logging
 
-from ..tools.visualization_tools import PlotlyToolKit
-from ..utils.logger import AnalysisLogger
+from backend.tools.visualization_tools import PlotlyToolKit
+from backend.utils.logger import AnalysisLogger
 
-logger = AnalysisLogger()
+logger = AnalysisLogger(session_id="temp-agent-session")
 
 
 class ReportComposerAgent:

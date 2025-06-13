@@ -9,15 +9,15 @@ from datetime import datetime
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-from ..utils.logger import AnalysisLogger
-from ..utils.exceptions import AnalysisException
+from backend.utils.logger import AnalysisLogger
+from backend.utils.exceptions import AnalysisException
 
 
 class WebSocketService:
     """Service for real-time WebSocket communication"""
     
     def __init__(self):
-        self.logger = AnalysisLogger()
+        self.logger = AnalysisLogger(session_id="temp-agent-session")
         self.active_connections: Dict[str, List[websockets.WebSocketServerProtocol]] = {}
         self.connection_metadata: Dict[str, Dict[str, Any]] = {}
     

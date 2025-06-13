@@ -23,7 +23,7 @@ from neuralprophet import NeuralProphet
 from utils.logger import AnalysisLogger
 from utils.exceptions import ModelTrainingException
 
-logger = AnalysisLogger()
+logger = AnalysisLogger(session_id="temp-agent-session")
 
 
 class NeuralProphetWrapper:

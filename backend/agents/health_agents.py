@@ -12,10 +12,10 @@ import numpy as np
 from datetime import datetime, timedelta
 import logging
 
-from ..tools.technical_tools import RSI_MACD_Tool, VolatilityScanner
-from ..utils.logger import AnalysisLogger
+from backend.tools.technical_tools import RSI_MACD_Tool, VolatilityScanner
+from backend.utils.logger import AnalysisLogger
 
-logger = AnalysisLogger()
+logger = AnalysisLogger("temp-agent-session")
 
 
 class IndicatorAnalysisAgent:

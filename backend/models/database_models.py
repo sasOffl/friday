@@ -2,11 +2,12 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from config.database import Base
+from backend.config.base import Base
 
 class StockData(Base):
     """Historical stock price data"""
     __tablename__ = "stock_data"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     symbol = Column(String(10), index=True, nullable=False)
@@ -21,6 +22,7 @@ class StockData(Base):
 class NewsArticle(Base):
     """News articles with sentiment analysis"""
     __tablename__ = "news_articles"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     symbol = Column(String(10), index=True, nullable=False)
@@ -35,6 +37,7 @@ class NewsArticle(Base):
 class TechnicalIndicator(Base):
     """Technical indicators data"""
     __tablename__ = "technical_indicators"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     symbol = Column(String(10), index=True, nullable=False)
@@ -52,6 +55,7 @@ class TechnicalIndicator(Base):
 class Prediction(Base):
     """Stock price predictions"""
     __tablename__ = "predictions"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     symbol = Column(String(10), index=True, nullable=False)
@@ -67,6 +71,7 @@ class Prediction(Base):
 class AnalysisSession(Base):
     """Analysis session tracking"""
     __tablename__ = "analysis_sessions"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(String(50), unique=True, index=True, nullable=False)
@@ -82,6 +87,7 @@ class AnalysisSession(Base):
 class SessionLog(Base):
     """Session activity logs"""
     __tablename__ = "session_logs"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(String(50), ForeignKey("analysis_sessions.session_id"), nullable=False)
